@@ -258,7 +258,7 @@ class ProfileSerializer(serializers.ModelSerializer):
         )
 
 
-class AttachmentSerializer(serializers.ModelSerializer):
+class AttachmentsSerializer(serializers.ModelSerializer):
     """Serializer for Attachments model using ContentType"""
 
     file_path = serializers.SerializerMethodField()

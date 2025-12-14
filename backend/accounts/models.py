@@ -8,7 +8,7 @@ from phonenumber_field.modelfields import PhoneNumberField
 from common.base import AssignableMixin, BaseModel
 from common.models import Org, Profile, Tags, Teams
 from common.utils import COUNTRIES, INDCHOICES
-from contacts.models import Contact
+# from contacts.models import Contact
 
 
 class Account(AssignableMixin, BaseModel):
@@ -46,9 +46,9 @@ class Account(AssignableMixin, BaseModel):
     # Assignment
     assigned_to = models.ManyToManyField(Profile, related_name="account_assigned_users")
     teams = models.ManyToManyField(Teams, related_name="account_teams")
-    contacts = models.ManyToManyField(
-        "contacts.Contact", related_name="account_contacts"
-    )
+    # contacts = models.ManyToManyField(
+    #     "contacts.Contact", related_name="account_contacts"
+    # )
 
     # Tags
     tags = models.ManyToManyField(Tags, blank=True)
@@ -103,7 +103,7 @@ class AccountEmail(BaseModel):
     from_account = models.ForeignKey(
         Account, related_name="sent_email", on_delete=models.SET_NULL, null=True
     )
-    recipients = models.ManyToManyField(Contact, related_name="recieved_email")
+    # recipients = models.ManyToManyField(Contact, related_name="recieved_email")
     message_subject = models.TextField(null=True)
     message_body = models.TextField(null=True)
     timezone = models.CharField(max_length=100, default="UTC")
@@ -154,9 +154,9 @@ class AccountEmailLog(BaseModel):
     email = models.ForeignKey(
         AccountEmail, related_name="email_log", on_delete=models.SET_NULL, null=True
     )
-    contact = models.ForeignKey(
-        Contact, related_name="contact_email_log", on_delete=models.SET_NULL, null=True
-    )
+    # contact = models.ForeignKey(
+    #     Contact, related_name="contact_email_log", on_delete=models.SET_NULL, null=True
+    # )
     is_sent = models.BooleanField(default=False)
     org = models.ForeignKey(
         Org,
