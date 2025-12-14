@@ -1,4 +1,4 @@
-from django import template 
+from django import template
 
 register = template.Library()
 
@@ -559,7 +559,7 @@ def is_document_file_code(ext):
     return ext.lower() in code_ext_list
 
 
-def is_document_filoe_text(ext):
+def is_document_file_text(ext):
     text_ext_list = [
         "doc",
         "docx",
@@ -616,4 +616,3 @@ def view_edit_condition(user, task):
     ):
         return True
     return False
-
