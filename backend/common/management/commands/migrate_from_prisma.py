@@ -1,0 +1,1 @@
+# understand the config / requirement of prisma
