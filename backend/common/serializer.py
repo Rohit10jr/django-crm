@@ -58,7 +58,7 @@ class OrganizationSerializer(serializers.ModelSerializer):
         fields = ("id", "name", "api_key")
 
 
-class SocialLoginSerializer(serializers.Seriailzer):
+class SocialLoginSerializer(serializers.Serializer):
     token = serializers.CharField()
 
 
@@ -84,7 +84,7 @@ class CommentCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating comments with ContentType"""
 
     content_type = serializers.CharField(write_only=True)
-    obejct_id = serializers.UUODField(write_only=True)
+    obejct_id = serializers.UUIDField(write_only=True)
 
     class Meta:
         model = Comment

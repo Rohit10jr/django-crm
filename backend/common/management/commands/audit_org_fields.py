@@ -18,7 +18,8 @@ from django.db import connection
 class Command(BaseCommand):
     help = "Audit and report on models with nullable org fields"
 
-    def add_arguments(self, parser):
+    # [??] understand this block 
+    def add_arguments(self, parser): 
         parser.add_argument(
             "--check",
             action="store_true",
@@ -76,9 +77,9 @@ class Command(BaseCommand):
 
         for app_label, model_name in models_with_nullable_org:
             try:
-                model = apps.get_model(app_label, model_name)
-                total_count = model.objects.count()
-                null_count = model.objects.filter(org__isnull=True).count()
+                model = apps.get_model(app_label, model_name)  # [??]
+                total_count = model.objects.count()  # [??] 
+                null_count = model.objects.filter(org__isnull=True).count() # [??]
 
                 if null_count > 0:
                     issues_found.append(
@@ -95,7 +96,7 @@ class Command(BaseCommand):
                     )
 
                 if verbose:
-                    self._show_model_details(model)
+                    self._show_model_details(model)  # [??]
 
             except LookupError:
                 self.stdout.write(
@@ -165,16 +166,18 @@ class Command(BaseCommand):
                 )
             )
 
-        # Recommendations
-        self.stdout.write(self.style.NOTICE("\n=== Next Steps ===\n"))
-        self.stdout.write(
-            "1. Fix any NULL org values using --fix or manually\n"
-            "2. Create migration to set org fields to NOT NULL:\n"
-            "   - Address.org: null=False, blank=False\n"
-            "   - Tags.org: null=False, blank=False\n"
-            "3. Run: python manage.py makemigrations common\n"
-            "4. Run: python manage.py migrate\n"
-        )
+        # [!!] udpated recommendations based on fix
+        if not fix:
+            # Recommendations
+            self.stdout.write(self.style.NOTICE("\n=== Next Steps ===\n"))
+            self.stdout.write(
+                "1. Fix any NULL org values using --fix or manually\n"
+                "2. Create migration to set org fields to NOT NULL:\n"
+                "   - Address.org: null=False, blank=False\n"
+                "   - Tags.org: null=False, blank=False\n"
+                "3. Run: python manage.py makemigrations common\n"
+                "4. Run: python manage.py migrate\n"
+            )
 
     def _show_model_details(self, model):
         """Show detailed information about a model's org field configuration."""

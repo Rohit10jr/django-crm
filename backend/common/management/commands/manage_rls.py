@@ -20,7 +20,7 @@ class Command(BaseCommand):
     help = "Check Row-Level Security (RLS) status for multi-tenancy"
 
     # Use centralized RLS configuration
-    ORG_SCOPED_TABLES = RLS_CONFIG["tables"]
+    ORG_SCOPED_TABLES = RLS_CONFIG["tables"] # [??] understand this block
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -51,7 +51,7 @@ class Command(BaseCommand):
 
     def check_status(self):
         """Check RLS status for all org-scoped tables."""
-        self.stdout.write(self.style.MIGRATE_HEADING("RLS Status:"))
+        self.stdout.write(self.style.MIGRATE_HEADING("RLS Status:")) #[??] understand
         self.stdout.write("")
 
         with connection.cursor() as cursor:
@@ -59,7 +59,7 @@ class Command(BaseCommand):
             cursor.execute(
                 "SELECT current_user, usesuper FROM pg_user WHERE usename = current_user"
             )
-            user, is_super = cursor.fetchone()
+            user, is_super = cursor.fetchone() # [??]
 
             if is_super:
                 self.stdout.write(
@@ -84,7 +84,7 @@ class Command(BaseCommand):
 
                 result = cursor.fetchone()
                 if result:
-                    rls_enabled, rls_forced = result
+                    rls_enabled, rls_forced = result # [??]
                     if rls_enabled:
                         status = self.style.SUCCESS("ENABLED")
                         if rls_forced:
@@ -103,7 +103,7 @@ class Command(BaseCommand):
 
     def test_rls(self):
         """Test that RLS is working correctly."""
-        self.stdout.write(self.style.MIGRATE_HEADING("Testing RLS..."))
+        self.stdout.write(self.style.MIGRATE_HEADING("Testing RLS...")) # [??]
 
         set_context_sql = get_set_context_sql()
 
@@ -118,7 +118,7 @@ class Command(BaseCommand):
                 )
                 return
 
-            org_a = str(orgs[0][0])
+            org_a = str(orgs[0][0]) # [??]
             org_b = str(orgs[1][0])
 
             # Test with org_a context
