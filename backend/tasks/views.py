@@ -47,9 +47,25 @@ class TaskListView(APIView, LimitOffsetPagination):
 
     def get_context_data(self, **kwargs):
         params = self.request.query_params
+        # [!!] this can cause n+1 problem
         queryset = self.model.objects.filter(org=self.request.profile.org).order_by(
             "-id"
         )
+        # [!!] this solves n+1 problem
+        # queryset = (
+        #     self.model.objects
+        #     .filter(org=self.request.profile.org)
+        #     .select_related("created_by", "account")   # FK
+        #     .prefetch_related(
+        #         "assigned_to",      # M2M
+        #         "contacts",         # M2M
+        #         "teams",            # M2M
+        #         "task_attachment",  # reverse FK
+        #         "task_comments",    # reverse FK
+        #     )
+        #     .order_by("-id")
+        # )
+
         accounts = Account.objects.filter(org=self.request.profile.org)
         contacts = Contact.objects.filter(org=self.request.profile.org)
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
@@ -74,6 +90,7 @@ class TaskListView(APIView, LimitOffsetPagination):
             if params.get("priority"):
                 queryset = queryset.filter(priority=params.get("priority"))
         context = {}
+        # [!!] manual offset risky
         results_tasks = self.paginate_queryset(
             queryset.distinct(), self.request, view=self
         )
@@ -160,6 +177,7 @@ class TaskDetailView(APIView):
         ]
         if self.request.profile == self.task_obj.created_by:
             user_assgn_list.append(self.request.profile.id)
+        # [!!] add this in custom logic
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if self.request.profile.id not in user_assgn_list:
                 return Response(
@@ -194,6 +212,7 @@ class TaskDetailView(APIView):
             users_mention = [{"username": self.task_obj.created_by.user.email}]
         else:
             users_mention = list(self.task_obj.assigned_to.all().values("user__email"))
+
         if self.request.profile.role == "ADMIN" or self.request.profile.is_admin:
             users = Profile.objects.filter(
                 is_active=True, org=self.request.profile.org
@@ -203,17 +222,18 @@ class TaskDetailView(APIView):
                 role="ADMIN", org=self.request.profile.org
             ).order_by("user__email")
 
-        if self.request.profile == self.task_obj.created_by:
-            user_assgn_list.append(self.request.profile.id)
-        if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
-            if self.request.profile.id not in user_assgn_list:
-                return Response(
-                    {
-                        "error": True,
-                        "errors": "You don't have Permission to perform this action",
-                    },
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+        # [!!] redundant logic
+        # if self.request.profile == self.task_obj.created_by:
+        #     user_assgn_list.append(self.request.profile.id)
+        # if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
+        #     if self.request.profile.id not in user_assgn_list:
+        #         return Response(
+        #             {
+        #                 "error": True,
+        #                 "errors": "You don't have Permission to perform this action",
+        #             },
+        #             status=status.HTTP_403_FORBIDDEN,
+        #         )
         team_ids = [user.id for user in self.task_obj.get_team_users]
         all_user_ids = users.values_list("id", flat=True)
         users_excluding_team_id = set(all_user_ids) - set(team_ids)
@@ -270,13 +290,21 @@ class TaskDetailView(APIView):
                 )
 
         if self.request.FILES.get("task_attachment"):
+            # [!!] these fields are missing and attachment.task is not in model
+            # attachment.content_type = ContentType.objects.get_for_model(self.task_obj)
+            # attachment.object_id = self.task_obj.id
+            # attachment.content_object = self.task_obj
+
             attachment = Attachments()
+            # [!!] basemodel already sets this created_by
             attachment.created_by = self.request.profile.user
             attachment.file_name = self.request.FILES.get("task_attachment").name
             attachment.task = self.task_obj
             attachment.attachment = self.request.FILES.get("task_attachment")
             attachment.save()
 
+        # [!!] since we dont set content_type = Task, object_id = task.id
+        # [!!] this might fail
         task_content_type = ContentType.objects.get_for_model(Task)
         comments = Comment.objects.filter(
             content_type=task_content_type,
@@ -312,6 +340,7 @@ class TaskDetailView(APIView):
         )
         if serializer.is_valid():
             task_obj = serializer.save()
+            # [!!] not used
             previous_assigned_to_users = list(
                 task_obj.assigned_to.all().values_list("id", flat=True)
             )
@@ -371,6 +400,7 @@ class TaskCommentView(APIView):
     permission_classes = (IsAuthenticated,)
 
     def get_object(self, pk):
+        # [!!] use get_object_or_404
         return self.model.objects.get(pk=pk, org=self.request.profile.org)
 
     @extend_schema(
@@ -388,6 +418,7 @@ class TaskCommentView(APIView):
         ):
             serializer = CommentSerializer(obj, data=params)
             if params.get("comment"):
+                # [!!] use raise_exception=True instead of this check
                 if serializer.is_valid():
                     serializer.save()
                     return Response(
@@ -436,6 +467,7 @@ class TaskAttachmentView(APIView):
 
     @extend_schema(tags=["Tasks"], parameters=swagger_params.organization_params)
     def delete(self, request, pk, format=None):
+        # [!!] add org=request.profile.org in this query
         self.object = self.model.objects.get(pk=pk)
         if (
             request.profile.role == "ADMIN"
@@ -512,6 +544,7 @@ class BoardListCreateView(APIView, LimitOffsetPagination):
             queryset = queryset.filter(name__icontains=search)
 
         # Pagination
+        # [!!] offset is handled internally, update pervious pagination like this.
         results = self.paginate_queryset(queryset, request, view=self)
         serializer = BoardListSerializer(results, many=True)
 
@@ -538,6 +571,7 @@ class BoardListCreateView(APIView, LimitOffsetPagination):
         """Create a new board with default columns"""
         org = request.profile.org
         user_profile = request.profile
+        # [!!] .copy() is used to make request.data mutable
         data = request.data.copy()
 
         serializer = BoardSerializer(data=data)
