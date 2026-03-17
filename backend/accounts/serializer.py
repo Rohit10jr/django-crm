@@ -11,13 +11,13 @@ from common.serializer import (
 )
 # from contacts.serializer import ContactSerializer
 
-
+# [!!] rename TagsSerializer
 class TagsSerailizer(serializers.ModelSerializer):
     class Meta:
         model = Tags
         fields = ("id", "name", "slug")
 
-
+# [??] use select_related() prefetch_related()
 class AccountSerializer(serializers.ModelSerializer):
     """Serializer for reading Account data"""
 
@@ -26,6 +26,7 @@ class AccountSerializer(serializers.ModelSerializer):
     tags = TagsSerailizer(read_only=True, many=True)
     assigned_to = ProfileSerializer(read_only=True, many=True)
     # contacts = ContactSerializer(read_only=True, many=True)
+    # [!!] serial
     teams = TeamsSerializer(read_only=True, many=True)
     account_attachment = AttachmentsSerializer(read_only=True, many=True)
     get_team_users = ProfileSerializer(read_only=True, many=True)
@@ -58,6 +59,7 @@ class AccountSerializer(serializers.ModelSerializer):
             # Assignment
             "assigned_to",
             "teams",
+            # [!!] no contacts
             "contacts",
             # Tags
             "tags",
@@ -78,6 +80,7 @@ class AccountSerializer(serializers.ModelSerializer):
 
 
 class EmailSerializer(serializers.ModelSerializer):
+    # [!!] redundant
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -116,6 +119,7 @@ class EmailLogSerializer(serializers.ModelSerializer):
     email = EmailSerializer()
 
     class Meta:
+        # [!!] contact is missing in AccountEmailLog
         model = AccountEmailLog
         fields = ["email", "contact", "is_sent"]
 
@@ -130,6 +134,7 @@ class AccountReadSerializer(serializers.ModelSerializer):
 class AccountWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
+        # [!!] contacts is missing in Account
         model = Account
         fields = [
             "name",
@@ -210,6 +215,7 @@ class AccountCommentEditSwaggerSerializer(serializers.Serializer):
 
 class EmailWriteSerializer(serializers.ModelSerializer):
     class Meta:
+        # [!!] recipients is missing in AccountEmail
         model = AccountEmail
         fields = (
             "from_email",
