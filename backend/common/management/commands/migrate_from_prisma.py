@@ -329,7 +329,7 @@ class Command(BaseCommand):
 
             # Split name into first/last (Django User doesn't have name field directly)
             name = row["name"] or ""
-            name_parts = name.split(" ", 1)
+            name_parts = name.split(" ", 1) # [??] check if used later
 
             if not self.dry_run:
                 # Truncate profile_pic to 1000 chars if needed
@@ -419,6 +419,7 @@ class Command(BaseCommand):
             # Store mapping for later use
             if row["userId"] not in self.user_to_profile:
                 self.user_to_profile[row["userId"]] = {}
+            # [??] 
             self.user_to_profile[row["userId"]][row["organizationId"]] = profile_id
 
             migrated += 1
@@ -478,7 +479,7 @@ class Command(BaseCommand):
                             row["postalCode"],
                             (
                                 row["country"][:2] if row["country"] else None
-                            ),  # Convert to 2-letter code
+                            ),  # Convert to 2-letter code [??] why
                             row["annualRevenue"],
                             row["description"],
                             row["numberOfEmployees"],
@@ -490,6 +491,7 @@ class Command(BaseCommand):
                     )
 
                 # Add owner to assigned_to M2M
+                # [??]
                 owner_profile_id = self.user_to_profile.get(row["ownerId"], {}).get(
                     row["organizationId"]
                 )
@@ -636,6 +638,7 @@ class Command(BaseCommand):
                 continue
 
             # Map status and source
+            # [??]
             status = LEAD_STATUS_MAP.get(row["status"], "assigned")
             source = (
                 LEAD_SOURCE_MAP.get(row["leadSource"], "other")
@@ -718,6 +721,7 @@ class Command(BaseCommand):
                 continue
 
             # Map stage
+            # [??]
             stage = OPPORTUNITY_STAGE_MAP.get(row["stage"], "PROSPECTING")
 
             if not self.dry_run:
@@ -771,6 +775,7 @@ class Command(BaseCommand):
             migrated += 1
 
         # Migrate opportunity contacts M2M
+        # [??]
         self.migrate_opportunity_contacts()
 
         self.stats["migrated"]["Opportunity"] = migrated
@@ -783,6 +788,8 @@ class Command(BaseCommand):
             SELECT "A" as opportunity_id, "B" as contact_id
             FROM "_ContactToOpportunity"
         """
+        # [??] why no skip options
+        # [!!] because this onoly handles m2m
         try:
             rows = self.execute_query(query)
             for row in rows:
@@ -826,6 +833,7 @@ class Command(BaseCommand):
             )
 
             # Map case type
+            # [??]
             case_type = ""
             if row["type"]:
                 type_lower = row["type"].lower()
@@ -838,6 +846,7 @@ class Command(BaseCommand):
 
             if not self.dry_run:
                 # Truncate name to 64 chars if needed
+                # [??]
                 case_name = row["subject"]
                 if case_name and len(case_name) > 64:
                     case_name = case_name[:64]
@@ -966,6 +975,8 @@ class Command(BaseCommand):
             SELECT "A" as case_id, "B" as solution_id
             FROM "_CaseToSolution"
         """
+        # [??] why no skip
+        # [!!] no skip because this just handles m2m
         try:
             rows = self.execute_query(query)
             for row in rows:
@@ -1000,6 +1011,7 @@ class Command(BaseCommand):
                 continue
 
             # Map status and priority
+            # [??]
             status = TASK_STATUS_MAP.get(row["status"], "New")
             priority = TASK_PRIORITY_MAP.get(row["priority"], "Medium")
 
@@ -1113,6 +1125,7 @@ class Command(BaseCommand):
         self.stats["skipped"]["Product"] = skipped
         self.stdout.write(self.style.SUCCESS(f"  Migrated {migrated} products"))
 
+# [??] check this 
     def migrate_comments(self):
         """Migrate Comment → Comment (using GenericFK)"""
         query = """
@@ -1125,6 +1138,7 @@ class Command(BaseCommand):
         skipped = 0
 
         # Get content types
+        # [??]
         content_types = {
             "case": ContentType.objects.get_for_model(Case),
             "opportunity": ContentType.objects.get_for_model(Opportunity),
@@ -1221,6 +1235,7 @@ class Command(BaseCommand):
                 continue
 
             # Get owner profile
+            # [??]
             owner_profile_id = self.user_to_profile.get(row["ownerId"], {}).get(
                 row["organizationId"]
             )
@@ -1387,6 +1402,7 @@ class Command(BaseCommand):
                 JOIN "Board" b ON b.id = bc."boardId"
                 WHERE bc.id = %s
             """
+            # [??]
             org_rows = self.execute_query(board_org_query, [row["columnId"]])
             org_id = org_rows[0]["organizationId"] if org_rows else None
 
@@ -1462,6 +1478,7 @@ class Command(BaseCommand):
                 continue
 
             # Map reason
+            # [??]
             reason = row["reason"].lower() if row["reason"] else "general"
             valid_reasons = ["general", "sales", "support", "partnership", "other"]
             if reason not in valid_reasons:
