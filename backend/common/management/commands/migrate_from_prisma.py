@@ -329,11 +329,11 @@ class Command(BaseCommand):
 
             # Split name into first/last (Django User doesn't have name field directly)
             name = row["name"] or ""
-            name_parts = name.split(" ", 1) # [??] check if used later
+            name_parts = name.split(" ", 1) # [??] check if name_parts used later
 
             if not self.dry_run:
                 # Truncate profile_pic to 1000 chars if needed
-                profile_pic = row["profilePhoto"]
+                profile_pic = row["profilePhoto"] # [??] url ?
                 if profile_pic and len(profile_pic) > 1000:
                     profile_pic = profile_pic[:1000]
 
@@ -757,7 +757,8 @@ class Command(BaseCommand):
                         ],
                     )
 
-                # Add owner to assigned_to M2M
+                # Add owner to assigned_to M2M 
+                # [!!] m2m core table data
                 owner_profile_id = self.user_to_profile.get(row["ownerId"], {}).get(
                     row["organizationId"]
                 )
@@ -775,7 +776,7 @@ class Command(BaseCommand):
             migrated += 1
 
         # Migrate opportunity contacts M2M
-        # [??]
+        # [??] why we doing this
         self.migrate_opportunity_contacts()
 
         self.stats["migrated"]["Opportunity"] = migrated
@@ -789,7 +790,8 @@ class Command(BaseCommand):
             FROM "_ContactToOpportunity"
         """
         # [??] why no skip options
-        # [!!] because this onoly handles m2m
+        # [!!] migrate_oppportunity_contacts() = relationship table
+
         try:
             rows = self.execute_query(query)
             for row in rows:

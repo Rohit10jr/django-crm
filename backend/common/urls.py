@@ -42,3 +42,6 @@
 #     path("teams/", views.TeamsListView.as_view()),
 #     path("teams/<str:pk>/", views.TeamsDetailView.as_view()),
 # ]
+
+
+# [??] why urls are commented?

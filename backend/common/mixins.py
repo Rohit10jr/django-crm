@@ -23,6 +23,7 @@ class UserAuditModel(models.Model):
 
     created_by = models.ForeignKey(
         "common.User",
+        # settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         related_name="%(class)s_created_by",
         verbose_name="Created By",

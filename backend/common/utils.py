@@ -14,6 +14,7 @@ def jwt_payload_handler(user):
         # "role": user.role,
         # "has_sales_access": user.has_sales_access,
         # "has_marketing_access": user.has_marketing_access,
+        # [??] what is file_prepend ?
         "file_prepend": user.file_prepend,
         "username": user.email,
         "first_name": user.first_name,

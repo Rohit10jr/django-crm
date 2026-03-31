@@ -2,6 +2,10 @@ from django.contrib.auth.mixins import AccessMixin
 from django.core.exceptions import PermissionDenied
 
 
+# [??] use one central admin logic
+# def is_admin(user):
+#     return user.role == "ADMIN" or user.is_superuser
+
 def sales_access_required(function):
     """this function is a decorator used to authorize if a user has sales access"""
 
