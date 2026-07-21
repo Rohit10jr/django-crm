@@ -92,6 +92,18 @@ class Address(BaseModel):
     def __str__(self):
         return self.city if self.city else ""
 
+    # [??] same but with simplier code  
+    # def get_complete_address(self):
+    #     parts = [
+    #         self.address_line,
+    #         self.street,
+    #         self.city,
+    #         self.state,
+    #         self.postcode,
+    #         self.get_country_display() if self.country else "",
+    #     ]
+    #     return ", ".join(filter(None, parts))
+
     def get_complete_address(self):
         address = ""
         if self.address_line:
@@ -118,6 +130,7 @@ class Address(BaseModel):
                 address += self.postcode
         if self.country:
             if address:
+                # [??] get_country_display missing
                 address += ", " + self.get_country_display()
             else:
                 address += self.get_country_display()
@@ -285,6 +298,8 @@ class Comment(BaseModel):
         on_delete=models.CASCADE,
         related_name="comments",
     )
+    # [??] add them for target models
+    # comments = GenericRelation(Comment)
 
     class Meta:
         verbose_name = "Comment"
@@ -300,6 +315,8 @@ class Comment(BaseModel):
         return f"{self.comment}"
 
     def get_files(self):
+        # [??] 
+        # CommentFiles.objects.filter(comment=self)
         return CommentFiles.objects.filter(comment_id=self)
 
     @property
@@ -346,6 +363,8 @@ class CommentFiles(BaseModel):
     def get_file_name(self):
         if self.comment_file:
             return self.comment_file.path.split("/")[-1]
+            # [??]
+            # return os.path.basename(self.comment_file.name)
 
         return None
 
@@ -642,6 +661,7 @@ class Activity(BaseModel):
         related_name="activities",
     )
     action = models.CharField(max_length=20, choices=ACTION_CHOICES)
+    # [??] try genericforeign key
     entity_type = models.CharField(max_length=50, choices=ENTITY_TYPE_CHOICES)
     entity_id = models.UUIDField()
     entity_name = models.CharField(max_length=255, blank=True, default="")
@@ -659,6 +679,7 @@ class Activity(BaseModel):
         ]
 
     def __str__(self):
+        # [??] what is get_action_display
         return f"{self.user} {self.get_action_display()} {self.entity_type}: {self.entity_name}"
 
     @property
@@ -691,6 +712,8 @@ class Teams(BaseModel):
         return arrow.get(self.created_at).humanize()
 
     def get_users(self):
+        # [??]
+        # return list(self.users.values_list("id", flat=True))
         return ",".join(
             [str(_id) for _id in list(self.users.values_list("id", flat=True))]
         )
@@ -772,6 +795,6 @@ class ContactFormSubmission(BaseModel):
         self.replied_at = timezone.now()
         self.save()
 
-
+# [??] why this here
 # Import SecurityAuditLog so Django discovers it for migrations
 from common.audit_log import SecurityAuditLog

@@ -50,10 +50,10 @@ INSTALLED_APPS = [
     'django_ses',
     'drf_spectacular',
 
-    # 'common',
-    # 'accounts',
+    'common',
+    'accounts',
     # 'cases',
-    # 'contacts',
+    'contacts',
     # 'leads',
     # 'opportunity',
     # 'tasks',
@@ -270,7 +270,7 @@ LOGGING = {
     },
 }
 
-APPLICATION_NAME = "bottlecrm"
+APPLICATION_NAME = "OpenCRM"
 
 SETTINGS_EXPORT = ["APPLICATION_NAME"]
 

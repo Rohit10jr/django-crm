@@ -38,6 +38,8 @@ class AssignableMixin(models.Model):
 
         team_user_ids = list(self.teams.values_list("users__id", flat=True))
         assigned_user_ids = list(self.assigned_to.values_list("id", flat=True))
+        # [??] better option
+        # user_ids = set(team_user_ids + assigned_user_ids)
         user_ids = team_user_ids + assigned_user_ids
         return Profile.objects.filter(id__in=user_ids)
 
@@ -68,6 +70,7 @@ class BaseModel(AuditModel):
             super(BaseModel, self).save(*args, **kwargs)
         else:
             # Check if the model is being created or updated
+            # [??] _state
             if self._state.adding:
                 # If created only set created_by value: set updated_by to None
                 self.created_by = user

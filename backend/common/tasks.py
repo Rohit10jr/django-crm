@@ -15,7 +15,9 @@ from django.utils.http import urlsafe_based64_encode
 from common.models import Comment, Profile, Teams, User
 from common.token_generator import account_activation_token
 
-app Celery("redis://")
+# [!!] app = Celery("redis://")
+app = Celery("redis://")
+
 
 
 def set_rls_context(org_id):
@@ -34,7 +36,8 @@ def set_rls_context(org_id):
                 "SELECT set_config('app.current_org', %s, false)", [str(org_id)]
             )
 
-
+# [!!] task re-try option 
+# @app.task(bind=True, autoretry_for=(Exception,), retry_backoff=True)
 @app.task
 def send_email_to_new_user(user_id):
     """Send Mail To Users When their account is created"""
@@ -205,12 +208,14 @@ def send_email_user_delete(
         if recipients:
             msg = EmailMessage(
                 subject,
+                # [??] what is this html_context
                 html_context,
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 to=recipients,
             )
             msg.content_subtype = "html"
-            msg.sned()
+            # [!!] send
+            msg.send()
 
 
 
@@ -250,6 +255,8 @@ def resend_activation_link_to_user(
             activation_key,
         )
         recipients = [context["complete_url"]]
+        # [??] above is bug
+        # recipients = [user_email] or recipients = [] 
         recipients.append(user_email)
         subject = "Welcome to Bottle CRM"
         html_content = render_to_string("user_status_in.html", context=context)
@@ -268,12 +275,16 @@ def resend_activation_link_to_user(
 def send_email_to_reset_password(user_email):
     """Send Mail To Users When their account is created"""
     user = User.objects.filter(email=user_email).first()
+    # [!!] avoid crashing
+    # if not user:
+    #     return
     context = {}
     context["user_email"] = user_email
     context["url"] = settings.DOMAIN_NAME
     context["uid"] = (urlsafe_base64_encode(force_bytes(user.pk)),)
     context["token"] = default_token_generator.make_token(user)
-    context["token"] = context["token"]
+    # [??] why token is added in context again
+    # context["token"] = context["token"]
     context["complete_url"] = context[
         "url"
     ] + "/auth/reset-password/{uidb64}/{token}/".format(
@@ -303,6 +314,7 @@ def remove_users(remove_users_list, team_id, org_id=None):
     set_rls_context(org_id)
 
     removed_users_list = [i for i in removed_users_list if i.isdigit()]
+    # [??] removed_users is missing, should be removed_users_list
     users_list = Profile.objects.filter(id__in=removed_users.list)
     if users_list.exists():
         team = Teams.objects.filter(id=team_id).first()

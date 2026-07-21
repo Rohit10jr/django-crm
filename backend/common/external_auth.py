@@ -21,7 +21,7 @@ def verify_jwt_token(token):
     except jwt.InvalidTokenError:
         return False, "Invalid token"
 
-
+# [??] assumes one admin per org, may need to be updated if we want multiple admins per org
 class CustomDualAuthentication(BaseAuthentication):
 
     def authenticate(self, request):
@@ -29,6 +29,10 @@ class CustomDualAuthentication(BaseAuthentication):
         profile = None
 
         # Check JWT authentication
+        # [??]
+        # auth_header = request.headers.get("Authorization")
+        # if auth_header and auth_header.startswith("Bearer "):
+            # jwt_token = auth_header.split(" ")[1]
         jwt_token = (
             request.headers.get("Authorization", "").split(" ")[1]
             if "Authorization" in request.headers

@@ -233,6 +233,7 @@ def validate_org_ownership(obj, request):
         raise PermissionDenied("Organization context required")
 
     if not hasattr(obj, "org_id"):
+        # [??] return False
         return  # Object doesn't have org field
 
     if obj.org_id != request.profile.org_id:

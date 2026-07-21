@@ -2,7 +2,7 @@ from django import template
 
 register = template.Library()
 
-
+# [??] i think org repo has not added the register to all the func
 def is_document_file_image(ext):
     image_ext_list = [
         "bmp",
@@ -582,15 +582,17 @@ def is_document_file_sheet(ext):
 
 
 def is_document_file_zip(ext):
-    ext_list = [
-        "zip",
-        "7Z",
-        "gz",
-        "rar",
-        "ZIPX",
-        "ACE",
-        "tar",
-    ]
+    # [!!] lower it
+    ext_list = ["zip", "7z", "gz", "rar", "zipx", "ace", "tar"]
+    # ext_list = [
+    #     "zip",
+    #     "7Z",
+    #     "gz",
+    #     "rar",
+    #     "ZIPX",
+    #     "ACE",
+    #     "tar",
+    # ]
     return ext.lower() in ext_list
 
 
@@ -608,6 +610,7 @@ def delete_condition(user, task):
 
 @register.filter
 def view_edit_condition(user, task):
+    # [!!] check how to use prefetch, this causes DB query per template render
     if (
         user == task.created_by
         or user.role == "ADMIN"

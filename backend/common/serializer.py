@@ -58,7 +58,7 @@ class OrganizationSerializer(serializers.ModelSerializer):
         fields = ("id", "name", "api_key")
 
 
-class SocialLoginSerializer(serializers.Seriailzer):
+class SocialLoginSerializer(serializers.Serializer):
     token = serializers.CharField()
 
 
@@ -84,7 +84,8 @@ class CommentCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating comments with ContentType"""
 
     content_type = serializers.CharField(write_only=True)
-    obejct_id = serializers.UUODField(write_only=True)
+    # [!!] object_id not object_id
+    object_id = serializers.UUIDField(write_only=True)
 
     class Meta:
         model = Comment
@@ -594,6 +595,7 @@ class ActivitySerializer(serializers.ModelSerializer):
     """Serializer for recent activities"""
 
     user = ActivityUserSerializer(read_only=True)
+    # [??] get_action_display missing in model
     action_display = serializers.CharField(source="get_action_display", read_only=True)
     timestamp = serializers.DateTimeField(source="created_at", read_only=True)
     humanized_time = serializers.CharField(source="created_on_arrow", read_only=True)
@@ -664,10 +666,11 @@ class TeamCreateSerializer(serializers.ModelSerializer):
         fields = (
             "name",
             "description",
+            "org",
+            # [??] following are for get request
             "created_at",
             "created_by",
             "created_on_arrow",
-            "org",
         )
 
 

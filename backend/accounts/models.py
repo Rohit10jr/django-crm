@@ -95,6 +95,7 @@ class Account(AssignableMixin, BaseModel):
 
     @property
     def contact_values(self):
+        # [??] contacts is missing, need to add it back to the model to make this work ?
         contacts = list(self.contacts.values_list("id", flat=True))
         return ",".join(str(contact) for contact in contacts)
 
@@ -129,6 +130,7 @@ class AccountEmail(BaseModel):
     def __str__(self):
         return f"{self.message_subject}"
 
+    # [??] maybe add the logic in clean
     def save(self, *args, **kwargs):
         """
         Ensure org follows the parent account; fallback to the first recipient's org.
@@ -139,6 +141,7 @@ class AccountEmail(BaseModel):
             if self.from_account and self.from_account.org_id:
                 self.org_id = self.from_account.org_id
             else:
+                # [??] recipients is missing, need to add it back to the model to make this work ?
                 # For unsaved m2m, recipients may not be available until after save
                 recipient = self.recipients.first() if self.pk else None
                 if recipient and recipient.org_id:
@@ -183,6 +186,7 @@ class AccountEmailLog(BaseModel):
         if not self.org_id:
             if self.email and self.email.org_id:
                 self.org_id = self.email.org_id
+            # [!!]  contact is missing
             elif self.contact and self.contact.org_id:
                 self.org_id = self.contact.org_id
         if not self.org_id:

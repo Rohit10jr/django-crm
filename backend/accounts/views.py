@@ -25,7 +25,7 @@ from accounts.serializer import (
     TagsSerailizer,
 )
 from accounts.tasks import send_email, send_email_to_assigned_user
-from cases.serializer import CaseSerializer
+# from cases.serializer import CaseSerializer
 from common.models import Attachments, Comment, Profile, Tags, Teams
 
 # from common.external_auth import CustomDualAuthentication
@@ -64,6 +64,7 @@ class AccountsListView(APIView, LimitOffsetPagination):
         queryset = self.model.objects.filter(org=self.request.profile.org).order_by(
             "-id"
         )
+        # [??] what happens if this fails
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             queryset = queryset.filter(
                 Q(created_by=self.request.profile.user)
@@ -145,7 +146,8 @@ class AccountsListView(APIView, LimitOffsetPagination):
         leads = Lead.objects.filter(org=self.request.profile.org).exclude(
             Q(status="converted") | Q(status="closed")
         )
-        context["users"] = users
+        # [!!] duplicate
+        # context["users"] = users
         context["leads"] = LeadSerializer(leads, many=True).data
         context["status"] = ["active", "inactive"]  # Maps to is_active field
         return context
@@ -169,6 +171,7 @@ class AccountsListView(APIView, LimitOffsetPagination):
         if serializer.is_valid():
             account_object = serializer.save(org=request.profile.org)
             if data.get("contacts"):
+                # [!!] contacts = request.data.get("contacts", [])
                 contacts_list = json.loads(data.get("contacts"))
                 contacts = Contact.objects.filter(
                     id__in=contacts_list, org=request.profile.org
@@ -182,6 +185,8 @@ class AccountsListView(APIView, LimitOffsetPagination):
                     if tag_obj.exists():
                         tag_obj = tag_obj[0]
                     else:
+                        # [!!] above condition checks with lower
+                        # [!!] but here saved with same tag name, causes mismatch in filtering with tags, better to save with lower case name or slug field
                         tag_obj = Tags.objects.create(name=tag)
                     account_object.tags.add(tag_obj)
             if data.get("teams"):
@@ -189,13 +194,13 @@ class AccountsListView(APIView, LimitOffsetPagination):
                 teams = Teams.objects.filter(id__in=teams_list, org=request.profile.org)
                 if teams:
                     account_object.teams.add(*teams)
-                if data.get("assigned_to"):
-                    assigned_to_list = json.loads(data.get("assigned_to"))
-                    profiles = Profile.objects.filter(
-                        id__in=assigned_to_list, org=request.profile.org, is_active=True
-                    )
-                    if profiles:
-                        account_object.assigned_to.add(*profiles)
+            if data.get("assigned_to"):
+                assigned_to_list = json.loads(data.get("assigned_to"))
+                profiles = Profile.objects.filter(
+                    id__in=assigned_to_list, org=request.profile.org, is_active=True
+                )
+                if profiles:
+                    account_object.assigned_to.add(*profiles)
 
             if self.request.FILES.get("account_attachment"):
                 attachment = Attachments()
@@ -238,6 +243,7 @@ class AccountDetailView(APIView):
     def put(self, request, pk, format=None):
         data = request.data
         account_object = self.get_object(pk=pk)
+        # [!!] org filter is handled in get_object 
         if account_object.org != request.profile.org:
             return Response(
                 {"error": True, "errors": "User company doesnot match with header...."},
@@ -332,9 +338,10 @@ class AccountDetailView(APIView):
     @extend_schema(tags=["Accounts"], parameters=swagger_params.organization_params)
     def delete(self, request, pk, format=None):
         self.object = self.get_object(pk)
+        # [!!] org filter is handled in get_object 
         if self.object.org != request.profile.org:
             return Response(
-                {"error": True, "errors": "User company doesnot match with header...."},
+                {"error": True, "errors": "User company does not match with header...."},
                 status=status.HTTP_403_FORBIDDEN,
             )
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
@@ -355,6 +362,7 @@ class AccountDetailView(APIView):
     @extend_schema(tags=["Accounts"], parameters=swagger_params.organization_params)
     def get(self, request, pk, format=None):
         self.account = self.get_object(pk=pk)
+        # [!!] org filter is handled in get_object 
         if self.account.org != request.profile.org:
             return Response(
                 {"error": True, "errors": "User company doesnot match with header...."},
@@ -362,6 +370,8 @@ class AccountDetailView(APIView):
             )
         context = {}
         context["account_obj"] = AccountSerializer(self.account).data
+        # [!!] use this seperate permission check class
+        # [!!] add this before context
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
                 (self.request.profile == self.account.created_by)
@@ -426,9 +436,9 @@ class AccountDetailView(APIView):
                     ).order_by("user__email"),
                     many=True,
                 ).data,
-                "cases": CaseSerializer(
-                    self.account.accounts_cases.all(), many=True
-                ).data,
+                # "cases": CaseSerializer(
+                #     self.account.accounts_cases.all(), many=True
+                # ).data,
                 "teams": TeamsSerializer(
                     Teams.objects.filter(org=self.request.profile.org), many=True
                 ).data,
@@ -526,8 +536,9 @@ class AccountCommentView(APIView):
     model = Comment
     # authentication_classes = (CustomDualAuthentication,)
     permission_classes = (IsAuthenticated,)
+    # [??] no use of this 
     serializer_class = AccountCommentEditSwaggerSerializer
-
+    # [!!] use get_object_or_404
     def get_object(self, pk):
         return self.model.objects.get(pk=pk, org=self.request.profile.org)
 
@@ -545,6 +556,7 @@ class AccountCommentView(APIView):
             or request.profile == obj.commented_by
         ):
             serializer = CommentSerializer(obj, data=data)
+            # [!!] this comment logic is not required
             if data.get("comment"):
                 if serializer.is_valid():
                     serializer.save()
@@ -634,7 +646,7 @@ class AccountCreateMailView(APIView):
             data=data,
             request_obj=request,  # account=account,
         )
-
+        # [!!] this code overwrites the original request data
         data = {}
         if serializer.is_valid():
             email_obj = serializer.save(from_account=account)
@@ -647,6 +659,8 @@ class AccountCreateMailView(APIView):
 
             if data.get("recipients"):
                 contacts = json.loads(data.get("recipients"))
+                # [??] Contact.objects.filter(id__in=contacts)
+                # better option?
                 for contact in contacts:
                     obj_contact = Contact.objects.filter(
                         id=contact, org=request.profile.org
@@ -662,6 +676,8 @@ class AccountCreateMailView(APIView):
             else:
                 email_obj.scheduled_later = True
                 email_obj.scheduled_date_time = scheduled_date_time
+                # [??] save is missing
+                #  email_obj.save()
             return Response(
                 {"error": False, "message": "Email sent successfully"},
                 status=status.HTTP_200_OK,
