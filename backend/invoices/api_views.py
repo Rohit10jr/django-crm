@@ -1850,12 +1850,26 @@ class RevenueReportView(APIView):
         if not start_date:
             start_date = (timezone.now() - timedelta(days=365)).date()
         else:
-            start_date = datetime.datetime.strptime(start_date, "%Y-%m-%d").date()
+            try:
+                start_date = datetime.datetime.strptime(
+                    start_date, "%Y-%m-%d"
+                ).date()
+            except ValueError:
+                return Response(
+                    {"error": True, "errors": "Invalid start_date; expected YYYY-MM-DD."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         if not end_date:
             end_date = timezone.now().date()
         else:
-            end_date = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
+            try:
+                end_date = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
+            except ValueError:
+                return Response(
+                    {"error": True, "errors": "Invalid end_date; expected YYYY-MM-DD."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         # Get paid invoices in date range
         paid_invoices = Invoice.objects.filter(
