@@ -517,6 +517,11 @@ class LeadDetailView(APIView):
     def get(self, request, pk, **kwargs):
         self.lead_obj = self.get_object(pk)
         context = self.get_context_data(**kwargs)
+        # bug 13: get_context_data returns a Response (403) on the permission-
+        # denied path; return it directly instead of re-wrapping it in another
+        # Response (which loses the 403 status).
+        if isinstance(context, Response):
+            return context
         return Response(context)
 
     @extend_schema(
