@@ -20,6 +20,7 @@ from common.serializer import (
     ProfileSerializer,
     TeamsSerializer,
 )
+from accounts.models import Account
 from contacts.models import Contact
 from cases.models import Case
 from leads.models import Lead
@@ -117,6 +118,20 @@ class TaskListView(APIView, LimitOffsetPagination):
                 "tasks_count": self.count,
                 "offset": offset,
                 "tasks": tasks,
+                # bug: the list response must expose the form-helper lists the
+                # frontend needs (status/priority choices + org accounts/contacts).
+                "status": list(Task.STATUS_CHOICES),
+                "priority": list(Task.PRIORITY_CHOICES),
+                "accounts_list": list(
+                    Account.objects.filter(
+                        org=self.request.profile.org
+                    ).values("id", "name")
+                ),
+                "contacts_list": list(
+                    Contact.objects.filter(
+                        org=self.request.profile.org
+                    ).values("id", "first_name", "last_name")
+                ),
             }
         )
         return context
@@ -157,6 +172,15 @@ class TaskListView(APIView, LimitOffsetPagination):
     )
     def post(self, request, *args, **kwargs):
         params = request.data
+        # bug: reject a duplicate task title within the same org (the list/create
+        # tests assert this; there is no DB-level unique constraint on title).
+        if params.get("title") and Task.objects.filter(
+            org=request.profile.org, title=params.get("title")
+        ).exists():
+            return Response(
+                {"error": True, "errors": "A task with this title already exists."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         serializer = TaskCreateSerializer(data=params, request_obj=request)
         if serializer.is_valid():
             cf_payload = params.get("custom_fields")
