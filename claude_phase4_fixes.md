@@ -68,3 +68,27 @@ match its `(id, actor_id, changed_fields, org_id)` signature.
 Three contacts tests pinned the *buggy* behavior (`_hits_save_bug`,
 `pytest.raises(FieldError/ValidationError)`); rewritten to assert the fixed
 behavior. (`contacts/tests/test_contacts_api.py`.)
+
+## Group B — wrong status codes
+
+### bug 19 — revenue report 500 on a malformed date
+`start_date`/`end_date` were parsed with a bare `strptime`, so `?start_date=notadate`
+raised an uncaught `ValueError` → 500. Wrap each and return 400.
+(`invoices/api_views.py`.)
+
+### bug 13 — detail-view 403 double-wrapped
+`LeadDetailView.get` / `TaskDetailView.get` re-wrapped the `Response` that
+`get_context_data` returns on the permission-denied path in a second `Response`,
+losing the 403 (caller saw a 200, or a `TypeError` on render). Return the
+helper's `Response` directly. (`leads/views/lead_views.py`, `tasks/views/task_views.py`.)
+
+### bug 10 — bare `.get()` 500 instead of 404
+`LeadDetailView.post` did `Lead.objects.get(pk=pk)` (no org filter),
+`OpportunityDetailView.post` a bare `Opportunity.objects.get` → 500 on an unknown
+pk. Use `get_object_or_404` with the org. The attachment-delete sites in bug 10's
+list were already covered by bugs 4/30. (`leads/…`, `opportunity/…`.)
+
+### characterization tests updated (bugs 10, 13)
+Three tests pinned the old bugs (double-wrapped `TypeError`, cross-org POST → 403);
+rewritten to assert the fixed behavior (403 / 404). (`leads/tests/test_leads_api.py`,
+`tasks/tests/test_tasks_api.py`.)

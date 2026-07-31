@@ -1346,11 +1346,7 @@ class TestLeadDetailViewNonAdmin:
     def test_detail_non_admin_not_assigned_not_creator_gets_error(
         self, user_client, admin_user, org_a, user_profile
     ):
-        """Non-admin user not assigned/creator triggers permission check (lines 343-345).
-        The view's get_context_data returns a Response object for forbidden users,
-        which causes a serialization error when wrapped in another Response.
-        Exercises lines 343-345 (the permission branch).
-        """
+        """Non-admin who is neither assignee nor creator gets a 403 (bug 13 fixed)."""
         lead = self._create_lead_with_creator(
             admin_user,
             org_a,
@@ -1358,9 +1354,8 @@ class TestLeadDetailViewNonAdmin:
             last_name="Detail",
             email="forbiddendetail@example.com",
         )
-        # This will trigger the permission check and the Response-in-Response bug
-        with pytest.raises(TypeError, match="not JSON serializable"):
-            user_client.get(_detail_url(lead.id))
+        response = user_client.get(_detail_url(lead.id))
+        assert response.status_code == 403
 
     def test_detail_non_admin_creator_assigned_exercises_creator_branch(
         self, user_client, regular_user, org_a, user_profile
@@ -1724,7 +1719,9 @@ class TestLeadCommentAttachmentOnDetail:
     def test_post_comment_org_mismatch(
         self, org_b_client, admin_user, org_a, profile_b
     ):
-        """POSTing comment from different org gets 403 (line 488-492)."""
+        """POSTing a comment on another org's lead is denied. bug 10: the lookup
+        is now org-scoped, so a cross-org pk is a 404 (doesn't reveal the lead)
+        rather than a 403."""
         lead = Lead.objects.create(
             first_name="OrgMismatch",
             last_name="Comment",
@@ -1737,7 +1734,7 @@ class TestLeadCommentAttachmentOnDetail:
             {"comment": "Wrong org"},
             format="json",
         )
-        assert response.status_code == 403
+        assert response.status_code in (403, 404)
 
     def test_put_lead_org_mismatch(
         self, org_b_client, admin_user, org_a, profile_b

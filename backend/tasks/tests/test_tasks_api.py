@@ -756,13 +756,8 @@ class TestTaskDetailView:
     def test_get_detail_non_admin_forbidden(
         self, user_client, admin_user, org_a
     ):
-        """Non-admin who is not creator/assignee gets an error on GET detail.
-
-        The TaskDetailView.get_context_data returns a Response(403) object when
-        permission is denied. The GET handler wraps it in Response(context),
-        which causes a TypeError: 'Response is not JSON serializable'.
-        This is a known view bug.
-        """
+        """Non-admin who is not creator/assignee gets a 403 on GET detail
+        (bug 13 fixed: the 403 Response is returned directly, not re-wrapped)."""
         task = Task.objects.create(
             title="Forbidden Task",
             status="New",
@@ -770,11 +765,8 @@ class TestTaskDetailView:
             org=org_a,
             created_by=admin_user,
         )
-        # The view has a bug: get_context_data returns a Response object,
-        # which gets wrapped in another Response, causing a TypeError
-        # when the test client tries to render the response.
-        with pytest.raises(TypeError, match="not JSON serializable"):
-            user_client.get(f"/api/tasks/{task.id}/")
+        response = user_client.get(f"/api/tasks/{task.id}/")
+        assert response.status_code == 403
 
     def test_delete_non_admin_as_creator_forbidden(
         self, user_client, admin_user, org_a
