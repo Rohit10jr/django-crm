@@ -569,7 +569,11 @@ class ContactDetailView(APIView):
     def post(self, request, pk, **kwargs):
         params = request.data
         context = {}
-        self.contact_obj = Contact.objects.get(pk=pk)
+        # bug 30: org-scope the lookup so an admin can't comment/attach on
+        # another org's contact, and an unknown pk is a 404 (not a 500).
+        self.contact_obj = get_object_or_404(
+            Contact, pk=pk, org=request.profile.org
+        )
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
                 (self.request.profile == self.contact_obj.created_by)
