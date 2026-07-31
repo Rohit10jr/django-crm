@@ -185,7 +185,13 @@ class InboundMailboxListCreateView(APIView):
     def get(self, request, *args, **kwargs):
         org = request.profile.org
         qs = InboundMailbox.objects.filter(org=org).order_by("address")
-        return Response({"mailboxes": InboundMailboxSerializer(qs, many=True).data})
+        return Response(
+            {
+                "mailboxes": InboundMailboxSerializer(
+                    qs, many=True, context={"request": request}
+                ).data
+            }
+        )
 
     @extend_schema(
         tags=["InboundEmail"],
@@ -200,7 +206,9 @@ class InboundMailboxListCreateView(APIView):
         # Auto-generate a webhook secret on create when the admin didn't paste one.
         if not data.get("webhook_secret"):
             data["webhook_secret"] = secrets.token_urlsafe(32)
-        serializer = InboundMailboxSerializer(data=data, context={"org": org})
+        serializer = InboundMailboxSerializer(
+            data=data, context={"org": org, "request": request}
+        )
         if not serializer.is_valid():
             return Response(
                 {"error": True, "errors": serializer.errors},
@@ -224,7 +232,9 @@ class InboundMailboxDetailView(APIView):
                 {"error": True, "errors": "Mailbox not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        return Response(InboundMailboxSerializer(obj).data)
+        return Response(
+            InboundMailboxSerializer(obj, context={"request": request}).data
+        )
 
     @extend_schema(
         tags=["InboundEmail"],
@@ -242,7 +252,7 @@ class InboundMailboxDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
         serializer = InboundMailboxSerializer(
-            obj, data=request.data, partial=True, context={"org": org}
+            obj, data=request.data, partial=True, context={"org": org, "request": request}
         )
         if not serializer.is_valid():
             return Response(

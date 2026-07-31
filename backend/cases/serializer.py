@@ -496,6 +496,19 @@ class InboundMailboxSerializer(serializers.ModelSerializer):
                 org=org
             )
 
+    def to_representation(self, instance):
+        # bug 14: webhook_secret authenticates inbound webhooks; do not leak it
+        # to non-admin org members. Admins still receive it (they manage it).
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        profile = getattr(request, "profile", None) if request else None
+        is_admin = bool(profile) and (
+            profile.role == "ADMIN" or getattr(profile, "is_admin", False)
+        )
+        if not is_admin:
+            data.pop("webhook_secret", None)
+        return data
+
     def validate_address(self, value):
         # Postgres unique constraint already enforces (org, address); this is a
         # nicer error than IntegrityError on the create path.

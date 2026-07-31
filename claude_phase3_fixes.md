@@ -49,3 +49,15 @@ edited or deleted from the list response.
 - **Note:** this serializer *also* nests `OrganizationSerializer`, which leaks
   the org `api_key` — left untouched here (that's the deferred ②③ item).
 - **Upstream-relevant:** **yes.**
+
+### bug 14 — `InboundMailboxSerializer` leaks `webhook_secret` 🟠
+The mailbox list/detail reads returned `webhook_secret` (which authenticates
+inbound-email webhooks) to any authenticated org member, letting them forge
+inbound mail for the org.
+- **Fix:** drop `webhook_secret` from reads for non-admins via a role-aware
+  `to_representation` (admins still receive it — including the create response
+  that reveals the auto-generated secret once). Pass request context in the
+  mailbox list/detail/create/update views.
+- **Files:** `cases/serializer.py`, `cases/inbound_views.py`,
+  `cases/tests/test_mailbox_secret.py` (new).
+- **Upstream-relevant:** **yes.**
