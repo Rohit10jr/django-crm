@@ -74,19 +74,31 @@ class BusinessCalendarView(APIView):
 
     permission_classes = (IsAuthenticated,)
 
-    def get(self, request, *args, **kwargs):
-        cal = _get_or_create_default(request.profile.org)
+    def get(self, request, pk=None, *args, **kwargs):
+        # bug 15: honor the pk on /calendar/<pk>/ instead of always returning the
+        # default; /calendar/ (no pk) still returns the org's default calendar.
+        if pk is not None:
+            cal = get_object_or_404(
+                BusinessCalendar, pk=pk, org=request.profile.org
+            )
+        else:
+            cal = _get_or_create_default(request.profile.org)
         return Response(BusinessCalendarSerializer(cal).data)
 
-    def put(self, request, pk, *args, **kwargs):
+    def put(self, request, pk=None, *args, **kwargs):
         if not _is_admin(request.profile):
             return Response(
                 {"error": "Only admins can update business hours."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        cal = get_object_or_404(
-            BusinessCalendar, pk=pk, org=request.profile.org
-        )
+        # bug 15: PUT /calendar/ (no pk) used to 500 on the missing positional
+        # arg; default to the org's default calendar when no pk is given.
+        if pk is not None:
+            cal = get_object_or_404(
+                BusinessCalendar, pk=pk, org=request.profile.org
+            )
+        else:
+            cal = _get_or_create_default(request.profile.org)
         serializer = BusinessCalendarSerializer(
             cal, data=request.data, partial=True
         )
