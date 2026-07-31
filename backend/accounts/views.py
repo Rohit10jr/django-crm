@@ -286,26 +286,30 @@ class AccountDetailView(APIView):
                 {"error": True, "errors": "User company doesnot match with header...."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+        # bug 29: check permission BEFORE validation (matching accounts PATCH and
+        # every other write handler) so an unauthorized caller gets a clean 403,
+        # not a 400 that leaks the serializer's field constraints.
+        if (
+            self.request.profile.role != "ADMIN"
+            and not self.request.profile.is_admin
+        ):
+            if not (
+                (self.request.profile.user == account_object.created_by)
+                or (self.request.profile in account_object.assigned_to.all())
+            ):
+                return Response(
+                    {
+                        "error": True,
+                        "errors": "You do not have Permission to perform this action",
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
         serializer = AccountCreateSerializer(
             account_object, data=data, request_obj=request, account=True
         )
 
         if serializer.is_valid():
-            if (
-                self.request.profile.role != "ADMIN"
-                and not self.request.profile.is_admin
-            ):
-                if not (
-                    (self.request.profile.user == account_object.created_by)
-                    or (self.request.profile in account_object.assigned_to.all())
-                ):
-                    return Response(
-                        {
-                            "error": True,
-                            "errors": "You do not have Permission to perform this action",
-                        },
-                        status=status.HTTP_403_FORBIDDEN,
-                    )
             save_kwargs = {}
             if "custom_fields" in data:
                 cf_payload = data.get("custom_fields")
