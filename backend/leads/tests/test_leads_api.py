@@ -76,11 +76,11 @@ class TestLeadListView:
         assert data["error"] is True
 
     def test_create_lead_unauthenticated(self, unauthenticated_client):
-        with pytest.raises(PermissionDenied):
-            unauthenticated_client.post(
-                "/api/leads/",
-                {"first_name": "Test", "last_name": "Lead", "email": "t@t.com"},
-            )
+        response = unauthenticated_client.post(
+            "/api/leads/",
+            {"first_name": "Test", "last_name": "Lead", "email": "t@t.com"},
+        )
+        assert response.status_code in (401, 403)
 
     def test_org_isolation(self, org_b_client, admin_user, org_a):
         Lead.objects.create(

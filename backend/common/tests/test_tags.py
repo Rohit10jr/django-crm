@@ -35,8 +35,8 @@ class TestTagsListView:
         assert response.data["tags_count"] >= 1
 
     def test_unauthenticated(self, unauthenticated_client):
-        with pytest.raises(PermissionDenied):
-            unauthenticated_client.get(self.url)
+        response = unauthenticated_client.get(self.url)
+        assert response.status_code in (401, 403)
 
     def test_create_tag_non_admin_forbidden(self, user_client, org_a):
         """Non-admin user cannot create tags."""

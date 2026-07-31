@@ -367,8 +367,8 @@ class TestProfileDetailView:
 
     def test_profile_detail_unauthenticated(self, unauthenticated_client):
         """Unauthenticated user gets error (401 or PermissionDenied from middleware)."""
-        with pytest.raises((PermissionDenied, Exception)):
-            unauthenticated_client.get(self.url)
+        response = unauthenticated_client.get(self.url)
+        assert response.status_code in (401, 403)
 
 
 # ---------------------------------------------------------------------------

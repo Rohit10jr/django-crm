@@ -73,16 +73,16 @@ class TestCaseListView:
         assert "id" in response.data
 
     def test_create_case_unauthenticated(self, unauthenticated_client):
-        with pytest.raises(PermissionDenied):
-            unauthenticated_client.post(
-                CASES_LIST_URL,
-                {
-                    "name": "Should fail",
-                    "status": "New",
-                    "priority": "Normal",
-                },
-                format="json",
-            )
+        response = unauthenticated_client.post(
+            CASES_LIST_URL,
+            {
+                "name": "Should fail",
+                "status": "New",
+                "priority": "Normal",
+            },
+            format="json",
+        )
+        assert response.status_code in (401, 403)
 
     def test_org_isolation(self, org_b_client, case_a):
         """org_b_client must not see cases belonging to org_a."""

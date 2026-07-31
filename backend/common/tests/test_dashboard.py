@@ -35,8 +35,8 @@ class TestDashboardView:
 
     def test_dashboard_unauthenticated(self, unauthenticated_client):
         """Unauthenticated user gets PermissionDenied."""
-        with pytest.raises(PermissionDenied):
-            unauthenticated_client.get(self.url)
+        response = unauthenticated_client.get(self.url)
+        assert response.status_code in (401, 403)
 
     def test_dashboard_counts(self, admin_client, org_a, admin_user):
         """Dashboard should return accurate counts."""

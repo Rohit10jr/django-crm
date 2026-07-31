@@ -36,8 +36,8 @@ class TestDocumentListView:
         assert response.data["error"] is False
 
     def test_unauthenticated(self, unauthenticated_client):
-        with pytest.raises(PermissionDenied):
-            unauthenticated_client.get(self.url)
+        response = unauthenticated_client.get(self.url)
+        assert response.status_code in (401, 403)
 
     def test_list_documents_context_keys(self, admin_client, org_a):
         """Document list should include all expected context keys."""

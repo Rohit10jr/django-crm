@@ -44,12 +44,12 @@ class TestTaskListView:
         assert Task.objects.filter(title="New Task", org=org_a).exists()
 
     def test_create_task_unauthenticated(self, unauthenticated_client):
-        with pytest.raises(PermissionDenied):
-            unauthenticated_client.post(
-                "/api/tasks/",
-                {"title": "Unauthorized Task", "status": "New", "priority": "Low"},
-                format="json",
-            )
+        response = unauthenticated_client.post(
+            "/api/tasks/",
+            {"title": "Unauthorized Task", "status": "New", "priority": "Low"},
+            format="json",
+        )
+        assert response.status_code in (401, 403)
 
     def test_org_isolation(self, admin_client, admin_user, org_a, org_b):
         """Tasks from another org should not appear in the task list."""
