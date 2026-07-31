@@ -892,7 +892,7 @@ class ContactAttachmentView(APIView):
         },
     )
     def delete(self, request, pk, format=None):
-        self.object = self.model.objects.get(pk=pk)
+        self.object = get_object_or_404(self.model, pk=pk, org=request.profile.org)
         if (
             request.profile.role == "ADMIN"
             or request.profile.is_admin

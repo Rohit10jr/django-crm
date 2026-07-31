@@ -1,4 +1,5 @@
 from drf_spectacular.utils import extend_schema, inline_serializer
+from django.shortcuts import get_object_or_404
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -201,7 +202,7 @@ class LeadAttachmentView(APIView):
         },
     )
     def delete(self, request, pk, format=None):
-        self.object = self.model.objects.get(pk=pk)
+        self.object = get_object_or_404(self.model, pk=pk, org=request.profile.org)
         if (
             request.profile.role == "ADMIN"
             or request.user.is_superuser
