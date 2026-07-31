@@ -462,7 +462,9 @@ class LeadPipelineDetailView(APIView):
     permission_classes = (IsAuthenticated, HasOrgContext)
 
     def get_object(self, pk, org):
-        return get_object_or_404(LeadPipeline, pk=pk, org=org)
+        # bug 32: exclude soft-deleted pipelines so an archived one can't be
+        # read/edited/deleted by id (list & kanban already filter is_active).
+        return get_object_or_404(LeadPipeline, pk=pk, org=org, is_active=True)
 
     @extend_schema(tags=["Lead Pipelines"], responses={200: LeadPipelineSerializer})
     def get(self, request, pk):
@@ -537,7 +539,10 @@ class LeadStageCreateView(APIView):
             )
 
         org = request.profile.org
-        pipeline = get_object_or_404(LeadPipeline, pk=pipeline_pk, org=org)
+        # bug 32: don't allow stage writes on a soft-deleted pipeline.
+        pipeline = get_object_or_404(
+            LeadPipeline, pk=pipeline_pk, org=org, is_active=True
+        )
 
         serializer = LeadStageSerializer(data=request.data)
         if not serializer.is_valid():
@@ -624,7 +629,10 @@ class LeadStageReorderView(APIView):
             )
 
         org = request.profile.org
-        pipeline = get_object_or_404(LeadPipeline, pk=pipeline_pk, org=org)
+        # bug 32: don't allow stage writes on a soft-deleted pipeline.
+        pipeline = get_object_or_404(
+            LeadPipeline, pk=pipeline_pk, org=org, is_active=True
+        )
 
         stage_ids = request.data.get("stage_ids", [])
 
