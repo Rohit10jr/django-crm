@@ -60,3 +60,6 @@ Thumbs.db
 
 claude_review_plan.md
 codex_review_plan.md
+# local secrets
+backend/.env
+.env
