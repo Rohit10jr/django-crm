@@ -61,3 +61,81 @@ inbound mail for the org.
 - **Files:** `cases/serializer.py`, `cases/inbound_views.py`,
   `cases/tests/test_mailbox_secret.py` (new).
 - **Upstream-relevant:** **yes.**
+
+### bug 5 — dead `created_by` ownership check (30 sites) 🟠
+`request.profile == <obj>.created_by` compared a `Profile` to a `User` FK, which
+is never equal, so a record's non-admin **creator was locked out of their own
+record**. Replaced with `request.profile.user == …created_by` across 30 sites.
+- **Files:** `accounts/views.py`, `contacts/views.py`,
+  `opportunity/views/{opportunity_views,opportunity_interactions,kanban_views}.py`,
+  `tasks/views/task_views.py`, `invoices/api_views.py`, `cases/views.py`,
+  `common/views/document_views.py`.
+- **Upstream-relevant:** **yes.**
+
+### bug 29 — accounts `PUT` validates before permission check 🟡
+The ownership check sat inside `if serializer.is_valid()`, so an unauthorized
+caller sending a malformed body got a `400` leaking serializer constraints
+instead of `403`. Moved the check above validation (`accounts/views.py`).
+- **Upstream-relevant:** **yes.**
+
+### bug 28 — leads `PUT` missing ownership check 🟠
+`LeadDetailView.put` checked only org-match, so a non-admin blocked by `PATCH`
+could send the same change as `PUT` and fully overwrite/convert any lead in the
+org. Added the same ownership gate `PATCH` enforces, before validation
+(`leads/views/lead_views.py`).
+- **Upstream-relevant:** **yes.**
+
+### bug 31 — lead creator wrongly denied 🟠
+`get_context_data` appended `profile.user` (a User) to a list of Profile ids, so
+a lead's creator failed the `profile.id` membership test and got `403`. Append
+`profile.id` (`leads/views/lead_views.py`).
+- **Upstream-relevant:** **yes.**
+
+### bug 30 — contacts `POST` not org-scoped 🟢 (downgraded by RLS)
+`Contact.objects.get(pk=pk)` had no org filter. RLS already blocks the
+cross-tenant write; the fix adds the explicit `get_object_or_404(..., org=…)`
+and turns a 500-on-unknown-pk into a 404 (`contacts/views.py`).
+- **Upstream-relevant:** **yes.**
+
+### bug 4 — attachment-delete lookups not org-scoped (6 sites) 🟢 (defense-in-depth)
+The 6 attachment-delete handlers did `self.model.objects.get(pk=pk)` with no org
+filter. RLS already blocks cross-tenant delete; added
+`get_object_or_404(self.model, pk=pk, org=request.profile.org)` for an explicit
+check + proper 404 (accounts/contacts/leads/opportunity/cases/tasks).
+- **Upstream-relevant:** **yes.**
+
+### bug 32 — soft-deleted lead pipelines writable by id 🟡
+`get_object`, stage-create and stage-reorder looked up `LeadPipeline` without an
+`is_active` filter, so archived pipelines stayed editable by id. Added
+`is_active=True` (`leads/views/kanban_views.py`). *Follow-up:* check Case/Task
+pipeline siblings for the same pattern.
+- **Upstream-relevant:** **yes.**
+
+### ④ default DRF permission = IsAuthenticated 🟠
+`DEFAULT_PERMISSION_CLASSES` was unset (DRF default AllowAny), so a view could be
+public by omission. Set it to `IsAuthenticated` (defense-in-depth behind the
+tenancy middleware). Intended-anonymous views already declare permissions
+explicitly; `CreateLeadFromSite` relied on the old default, so it got an explicit
+`AllowAny` (`crm/settings.py`, `leads/views/lead_interactions.py`).
+- **Upstream-relevant:** **yes.**
+
+### CORS — misleading `CORS_ORIGIN_ALLOW_ALL = True` 🟢 (not a live bug)
+In `server_settings.py` (prod), overridden by the env-based CORS config in
+`settings.py` imported earlier — dead code that read as an allow-all. Replaced
+with a clarifying comment.
+- **Upstream-relevant:** **yes.**
+
+### Deferred (not done — discuss separately)
+- **②③ org-API-key escalation chain** — `APIKeyAuthentication` authenticates as
+  an arbitrary org admin, and `OrganizationSerializer` leaks the org `api_key`.
+  Left untouched pending a decision on removing vs securing the org-key auth.
+
+---
+
+## Result
+
+Full test suite (`crm.test_settings`, SQLite) after all Phase 3 fixes:
+**16 failed · 2033 passed · 16 skipped** — vs the Phase 2 baseline of
+**50 failed · 1986 passed**. That is **34 baseline failures fixed, 0
+regressions**, plus 13 new regression tests added. The 16 remaining failures are
+Phase 4 correctness items (bugs 6–13, 15–21), not touched here.
