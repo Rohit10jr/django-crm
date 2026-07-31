@@ -2126,30 +2126,18 @@ class InvoiceFromOpportunityView(APIView):
             )
 
         with transaction.atomic():
-            # Generate invoice number
-            last_invoice = (
-                Invoice.objects.filter(org=org).order_by("-created_at").first()
-            )
-            if last_invoice and last_invoice.invoice_number:
-                try:
-                    last_num = int(last_invoice.invoice_number.replace("INV-", ""))
-                    new_number = f"INV-{last_num + 1:06d}"
-                except ValueError:
-                    new_number = (
-                        f"INV-{Invoice.objects.filter(org=org).count() + 1:06d}"
-                    )
-            else:
-                new_number = "INV-000001"
-
-            # Create invoice
+            # bug 6: let the model generate the invoice number in its own
+            # INV-YYYYMMDD-XXXX format (Invoice.save() does this when
+            # invoice_number is unset) instead of a hand-rolled INV-NNNNNN that
+            # diverges from every other creation path. Field is invoice_title
+            # (not title) and the valid status is "Draft" (not "DRAFT").
             invoice = Invoice.objects.create(
-                invoice_number=new_number,
-                title=f"Invoice for {opportunity.name}",
+                invoice_title=f"Invoice for {opportunity.name}",
                 account=opportunity.account,
                 contact=primary_contact,
                 opportunity=opportunity,
                 currency=opportunity.currency or org.default_currency or "USD",
-                status="DRAFT",
+                status="Draft",
                 issue_date=timezone.now().date(),
                 due_date=timezone.now().date() + timedelta(days=30),
                 created_by=request.profile.user,
@@ -2181,11 +2169,13 @@ class InvoiceFromOpportunityView(APIView):
             invoice.save()
 
             # Create invoice history entry
+            # bug 6: match the task signature (invoice_id, actor_id,
+            # changed_fields, org_id) used by every other creation path.
             create_invoice_history.delay(
                 str(invoice.id),
                 str(request.profile.id),
-                "created",
-                f"Invoice created from opportunity: {opportunity.name}",
+                [],
+                str(request.profile.org.id),
             )
 
         # Return the created invoice
