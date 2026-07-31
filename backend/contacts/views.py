@@ -586,14 +586,18 @@ class ContactDetailView(APIView):
                     },
                     status=status.HTTP_403_FORBIDDEN,
                 )
-        comment_serializer = CommentSerializer(data=params)
-        if comment_serializer.is_valid():
-            if params.get("comment"):
-                comment_serializer.save(
-                    contact_id=self.contact_obj.id,
-                    commented_by_id=self.request.profile.id,
-                    org=request.profile.org,
-                )
+        # bug 8: derive the generic-FK fields server-side. The old code passed a
+        # non-existent contact_id and left object_id/org to be supplied by the
+        # body, so a normal {"comment": "..."} failed validation and the comment
+        # was silently dropped while the handler still returned 200.
+        if params.get("comment"):
+            Comment.objects.create(
+                comment=params.get("comment"),
+                content_type=ContentType.objects.get_for_model(Contact),
+                object_id=self.contact_obj.id,
+                commented_by=request.profile,
+                org=request.profile.org,
+            )
 
         if self.request.FILES.get("contact_attachment"):
             attachment = Attachments()

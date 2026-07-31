@@ -597,13 +597,17 @@ class AccountDetailView(APIView):
                     },
                     status=status.HTTP_403_FORBIDDEN,
                 )
-        comment_serializer = CommentSerializer(data=data)
-        if comment_serializer.is_valid():
-            if data.get("comment"):
-                comment_serializer.save(
-                    account_id=self.account_obj.id,
-                    commented_by=self.request.profile,
-                )
+        # bug 8: derive the generic-FK fields server-side (see contacts). The old
+        # code passed a non-existent account_id and left object_id/org to the
+        # body, so a plain {"comment": "..."} was silently dropped with a 200.
+        if data.get("comment"):
+            Comment.objects.create(
+                comment=data.get("comment"),
+                content_type=ContentType.objects.get_for_model(Account),
+                object_id=self.account_obj.id,
+                commented_by=self.request.profile,
+                org=request.profile.org,
+            )
 
         if self.request.FILES.get("account_attachment"):
             attachment = Attachments()
