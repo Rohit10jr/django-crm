@@ -383,7 +383,9 @@ class LeadDetailView(APIView):
             assigned_to.id for assigned_to in self.lead_obj.assigned_to.all()
         ]
         if self.request.profile.user == self.lead_obj.created_by:
-            user_assgn_list.append(self.request.profile.user)
+            # bug 31: append the Profile id (not the User) so the creator's own
+            # profile.id membership test below passes; a User never equals a UUID.
+            user_assgn_list.append(self.request.profile.id)
         if self.request.profile.role != "ADMIN" and not self.request.user.is_superuser:
             if self.request.profile.id not in user_assgn_list:
                 return Response(
