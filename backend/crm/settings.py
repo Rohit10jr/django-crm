@@ -183,7 +183,11 @@ LOGGING = {
     "formatters": {
         "django.server": {
             "()": "django.utils.log.ServerFormatter",
-            "format": "[%(server_time)s] %(message)s",
+            # bug 21: brace style matches Django's default and re-enables
+            # ServerFormatter's server_time fallback, so the broken-pipe log path
+            # (which logs without server_time) no longer crashes with a KeyError.
+            "format": "[{server_time}] {message}",
+            "style": "{",
         },
         "security": {
             "format": "%(asctime)s | %(levelname)s | %(message)s",
