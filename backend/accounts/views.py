@@ -296,7 +296,7 @@ class AccountDetailView(APIView):
                 and not self.request.profile.is_admin
             ):
                 if not (
-                    (self.request.profile == account_object.created_by)
+                    (self.request.profile.user == account_object.created_by)
                     or (self.request.profile in account_object.assigned_to.all())
                 ):
                     return Response(
@@ -462,7 +462,7 @@ class AccountDetailView(APIView):
         context["account_obj"] = AccountSerializer(self.account).data
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == self.account.created_by)
+                (self.request.profile.user == self.account.created_by)
                 or (self.request.profile in self.account.assigned_to.all())
             ):
                 return Response(
@@ -475,7 +475,7 @@ class AccountDetailView(APIView):
 
         comment_permission = False
         if (
-            self.request.profile == self.account.created_by
+            self.request.profile.user == self.account.created_by
             or self.request.profile.is_admin
             or self.request.profile.role == "ADMIN"
         ):
@@ -583,7 +583,7 @@ class AccountDetailView(APIView):
             )
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == self.account_obj.created_by)
+                (self.request.profile.user == self.account_obj.created_by)
                 or (self.request.profile in self.account_obj.assigned_to.all())
             ):
                 return Response(
@@ -650,7 +650,7 @@ class AccountDetailView(APIView):
             )
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == account_object.created_by)
+                (self.request.profile.user == account_object.created_by)
                 or (self.request.profile in account_object.assigned_to.all())
             ):
                 return Response(
@@ -875,7 +875,7 @@ class AccountAttachmentView(APIView):
         if (
             request.profile.role == "ADMIN"
             or request.profile.is_admin
-            or request.profile == self.object.created_by
+            or request.profile.user == self.object.created_by
         ):
             self.object.delete()
             return Response(

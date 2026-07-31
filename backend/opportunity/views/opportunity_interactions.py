@@ -159,7 +159,7 @@ class OpportunityAttachmentView(APIView):
         if (
             request.profile.role == "ADMIN"
             or request.user.is_superuser
-            or request.profile == self.object.created_by
+            or request.profile.user == self.object.created_by
         ):
             self.object.delete()
             return Response(

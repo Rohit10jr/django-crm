@@ -280,7 +280,7 @@ class TaskDetailView(APIView):
         user_assgn_list = [
             assigned_to.id for assigned_to in self.task_obj.assigned_to.all()
         ]
-        if self.request.profile == self.task_obj.created_by:
+        if self.request.profile.user == self.task_obj.created_by:
             user_assgn_list.append(self.request.profile.id)
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if self.request.profile.id not in user_assgn_list:
@@ -402,7 +402,7 @@ class TaskDetailView(APIView):
         self.task_obj = get_object_or_404(Task, pk=pk, org=request.profile.org)
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == self.task_obj.created_by)
+                (self.request.profile.user == self.task_obj.created_by)
                 or (self.request.profile in self.task_obj.assigned_to.all())
             ):
                 return Response(
@@ -479,7 +479,7 @@ class TaskDetailView(APIView):
         # though they can't read it.
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == self.task_obj.created_by)
+                (self.request.profile.user == self.task_obj.created_by)
                 or (self.request.profile in self.task_obj.assigned_to.all())
             ):
                 return Response(
@@ -631,7 +631,7 @@ class TaskDetailView(APIView):
         self.task_obj = self.get_object(pk)
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == self.task_obj.created_by)
+                (self.request.profile.user == self.task_obj.created_by)
                 or (self.request.profile in self.task_obj.assigned_to.all())
             ):
                 return Response(
@@ -794,7 +794,7 @@ class TaskDetailView(APIView):
         if (
             request.profile.role == "ADMIN"
             or request.profile.is_admin
-            or request.profile == self.object.created_by
+            or request.profile.user == self.object.created_by
         ):
             self.object.delete()
             return Response(
@@ -956,7 +956,7 @@ class TaskAttachmentView(APIView):
         if (
             request.profile.role == "ADMIN"
             or request.profile.is_admin
-            or request.profile == self.object.created_by
+            or request.profile.user == self.object.created_by
         ):
             self.object.delete()
             return Response(

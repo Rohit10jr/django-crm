@@ -291,7 +291,7 @@ class ContactDetailView(APIView):
 
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == contact_obj.created_by)
+                (self.request.profile.user == contact_obj.created_by)
                 or (self.request.profile in contact_obj.assigned_to.all())
             ):
                 return Response(
@@ -436,7 +436,7 @@ class ContactDetailView(APIView):
         )
         if user_assigned_accounts.intersection(contact_accounts):
             user_assgn_list.append(self.request.profile.id)
-        if self.request.profile == contact_obj.created_by:
+        if self.request.profile.user == contact_obj.created_by:
             user_assgn_list.append(self.request.profile.id)
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if self.request.profile.id not in user_assgn_list:
@@ -465,7 +465,7 @@ class ContactDetailView(APIView):
         else:
             users_mention = list(contact_obj.assigned_to.all().values("user__email"))
 
-        if request.profile == contact_obj.created_by:
+        if request.profile.user == contact_obj.created_by:
             user_assgn_list.append(self.request.profile.id)
 
         # Address is now flat fields on Contact model
@@ -576,7 +576,7 @@ class ContactDetailView(APIView):
         )
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == self.contact_obj.created_by)
+                (self.request.profile.user == self.contact_obj.created_by)
                 or (self.request.profile in self.contact_obj.assigned_to.all())
             ):
                 return Response(
@@ -653,7 +653,7 @@ class ContactDetailView(APIView):
             )
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == contact_obj.created_by)
+                (self.request.profile.user == contact_obj.created_by)
                 or (self.request.profile in contact_obj.assigned_to.all())
             ):
                 return Response(
@@ -896,7 +896,7 @@ class ContactAttachmentView(APIView):
         if (
             request.profile.role == "ADMIN"
             or request.profile.is_admin
-            or request.profile == self.object.created_by
+            or request.profile.user == self.object.created_by
         ):
             self.object.delete()
             return Response(

@@ -364,7 +364,7 @@ class OpportunityDetailView(APIView):
             )
         if self.request.profile.role != "ADMIN" and not self.request.user.is_superuser:
             if not (
-                (self.request.profile == opportunity_object.created_by)
+                (self.request.profile.user == opportunity_object.created_by)
                 or (self.request.profile in opportunity_object.assigned_to.all())
             ):
                 return Response(
@@ -577,7 +577,7 @@ class OpportunityDetailView(APIView):
             )
         if self.request.profile.role != "ADMIN" and not self.request.user.is_superuser:
             if not (
-                (self.request.profile == self.opportunity.created_by)
+                (self.request.profile.user == self.opportunity.created_by)
                 or (self.request.profile in self.opportunity.assigned_to.all())
             ):
                 return Response(
@@ -591,7 +591,7 @@ class OpportunityDetailView(APIView):
         comment_permission = False
 
         if (
-            self.request.profile == self.opportunity.created_by
+            self.request.profile.user == self.opportunity.created_by
             or self.request.user.is_superuser
             or self.request.profile.role == "ADMIN"
         ):
@@ -680,7 +680,7 @@ class OpportunityDetailView(APIView):
             )
         if self.request.profile.role != "ADMIN" and not self.request.user.is_superuser:
             if not (
-                (self.request.profile == self.opportunity_obj.created_by)
+                (self.request.profile.user == self.opportunity_obj.created_by)
                 or (self.request.profile in self.opportunity_obj.assigned_to.all())
             ):
                 return Response(
@@ -773,7 +773,7 @@ class OpportunityDetailView(APIView):
             )
         if self.request.profile.role != "ADMIN" and not self.request.user.is_superuser:
             if not (
-                (self.request.profile == opportunity_object.created_by)
+                (self.request.profile.user == opportunity_object.created_by)
                 or (self.request.profile in opportunity_object.assigned_to.all())
             ):
                 return Response(

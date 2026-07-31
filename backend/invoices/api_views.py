@@ -1230,7 +1230,7 @@ class EstimatePDFView(APIView):
         role = request.profile.role
         if role != "ADMIN" and not request.user.is_superuser:
             if not (
-                request.profile == estimate.created_by
+                request.profile.user == estimate.created_by
                 or request.profile in estimate.assigned_to.all()
             ):
                 return Response(
