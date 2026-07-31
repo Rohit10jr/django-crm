@@ -919,7 +919,10 @@ class AccountCreateMailView(APIView):
             request_obj=request,  # account=account,
         )
 
-        data = {}
+        # bug 7: use a distinct name for the error accumulator instead of
+        # reassigning `data = {}`, which discarded request.data (and its
+        # `recipients`) before the recipient block below could read it.
+        errors = {}
         if serializer.is_valid():
             email_obj = serializer.save(from_account=account)
             if scheduled_later not in ["", None, False, "false"]:
@@ -939,8 +942,8 @@ class AccountCreateMailView(APIView):
                         email_obj.recipients.add(contact)
                     else:
                         email_obj.delete()
-                        data["recipients"] = "Please enter valid recipient"
-                        return Response({"error": True, "errors": data})
+                        errors["recipients"] = "Please enter valid recipient"
+                        return Response({"error": True, "errors": errors})
             if data.get("scheduled_later") != "true":
                 send_email.delay(email_obj.id, str(request.profile.org.id))
             else:

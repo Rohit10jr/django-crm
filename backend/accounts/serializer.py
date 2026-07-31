@@ -106,6 +106,9 @@ class AccountSerializer(serializers.ModelSerializer):
 
 class EmailSerializer(serializers.ModelSerializer):
     def __init__(self, *args, **kwargs):
+        # bug 7: the view constructs this with request_obj=...; pop it so it
+        # doesn't reach ModelSerializer.__init__ and raise TypeError.
+        kwargs.pop("request_obj", None)
         super().__init__(*args, **kwargs)
 
     class Meta:
