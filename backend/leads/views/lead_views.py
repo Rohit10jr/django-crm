@@ -544,7 +544,7 @@ class LeadDetailView(APIView):
         params = request.data
 
         context = {}
-        self.lead_obj = Lead.objects.get(pk=pk)
+        self.lead_obj = get_object_or_404(Lead, pk=pk, org=request.profile.org)
         if self.lead_obj.org != request.profile.org:
             return Response(
                 {"error": True, "errors": "User company doesnot match with header...."},
