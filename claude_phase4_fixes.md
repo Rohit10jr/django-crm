@@ -31,3 +31,40 @@ that the frontend list/form needs (other list views expose equivalent helpers).
 Added them to the list context.
 - File: `tasks/views/task_views.py`.
 - Upstream-relevant: **yes.**
+
+## Group A — endpoints that can't work at all
+
+### bug 9 — contacts `?city` / `?assigned_to` filters
+`?city` filtered on a non-existent `address__city` relation (FieldError → 500);
+Contact has a flat `city` column → `city__icontains`. `?assigned_to` gated on
+`getlist` but filtered with `get`, passing a string to `__in` (per-character
+match) → use `getlist`. (`contacts/views.py`.)
+
+### bug 8 — comment-append silently dropped (accounts & contacts)
+Both passed a non-existent `account_id`/`contact_id` to `CommentSerializer.save()`
+and required `object_id`/`org` in the body, so a plain `{"comment": …}` failed
+validation and the comment was dropped while the handler returned 200. Create the
+`Comment` directly with the generic FK + server-derived org/commented_by.
+(`accounts/views.py`, `contacts/views.py`.)
+
+### bug 7 — accounts `create_mail` TypeError + dropped recipients
+`EmailSerializer.__init__` forwarded `request_obj` to `ModelSerializer.__init__`
+(TypeError); pop it. The handler reassigned `data = {}` right after
+`data = request.data`, so `recipients` were never read; use a distinct `errors`
+accumulator. (`accounts/serializer.py`, `accounts/views.py`.)
+
+### bug 15 — business-hours calendar routes
+`PUT /calendar/` (no pk) 500'd on the missing positional; `GET /calendar/<pk>/`
+ignored the pk and returned the default. Both methods now take an optional pk
+(use it if present, else the org default). (`business_hours/views.py`.)
+
+### bug 6 — InvoiceFromOpportunityView broken 4 ways
+`title=`→`invoice_title=`, `"DRAFT"`→`"Draft"`, dropped hand-rolled numbering for
+the model's `INV-YYYYMMDD-XXXX`, and fixed the `create_invoice_history` args to
+match its `(id, actor_id, changed_fields, org_id)` signature.
+(`invoices/api_views.py`.)
+
+### characterization tests updated (bugs 8, 9)
+Three contacts tests pinned the *buggy* behavior (`_hits_save_bug`,
+`pytest.raises(FieldError/ValidationError)`); rewritten to assert the fixed
+behavior. (`contacts/tests/test_contacts_api.py`.)
