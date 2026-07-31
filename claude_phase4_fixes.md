@@ -92,3 +92,11 @@ list were already covered by bugs 4/30. (`leads/…`, `opportunity/…`.)
 Three tests pinned the old bugs (double-wrapped `TypeError`, cross-org POST → 403);
 rewritten to assert the fixed behavior (403 / 404). (`leads/tests/test_leads_api.py`,
 `tasks/tests/test_tasks_api.py`.)
+
+## Group E — dev-experience
+
+### bug 21 — `django.server` formatter crashes on client disconnect
+The formatter used percent style `[%(server_time)s]`, so `ServerFormatter`'s
+`server_time` fallback never fired; the broken-pipe log path (no `server_time`)
+then crashed with a KeyError on every disconnect (~40-line traceback). Use brace
+style + `style="{"`. Dev-server only. (`crm/settings.py`.)
