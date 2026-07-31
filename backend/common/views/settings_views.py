@@ -43,7 +43,9 @@ class DomainList(APIView):
         return Response(
             {
                 "error": False,
-                "api_settings": APISettingsListSerializer(api_settings, many=True).data,
+                "api_settings": APISettingsListSerializer(
+                    api_settings, many=True, context={"request": request}
+                ).data,
                 "users": ProfileSerializer(users, many=True).data,
             },
             status=status.HTTP_200_OK,
@@ -117,7 +119,12 @@ class DomainDetailView(APIView):
     def get(self, request, pk, format=None):
         api_setting = self.get_object(pk)
         return Response(
-            {"error": False, "domain": APISettingsListSerializer(api_setting).data},
+            {
+                "error": False,
+                "domain": APISettingsListSerializer(
+                    api_setting, context={"request": request}
+                ).data,
+            },
             status=status.HTTP_200_OK,
         )
 

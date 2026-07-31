@@ -36,3 +36,16 @@ its own auth (opaque portal token, api_setting apikey, or SNS signature).
   invoice/estimate portal, website lead capture, inbound-email webhook
   (also closes bugs 1, 2, 3, which share this root cause).
 - **Upstream-relevant:** **yes.**
+
+### bug 27 — `APISettingsListSerializer` leaks `apikey`, omits `id` 🟠
+The lead-capture `apikey` (a secret) was returned to **any** authenticated org
+member, and the serialized rows had **no `id`**, so a listed row couldn't be
+edited or deleted from the list response.
+- **Fix:** add `id` to the fields; drop `apikey` from reads for non-admins via
+  a role-aware `to_representation` (admins still receive it). Pass request
+  context in `DomainList.get` / `DomainDetailView.get`.
+- **Files:** `common/serializer.py`, `common/views/settings_views.py`,
+  `common/tests/test_apisettings_apikey.py` (new).
+- **Note:** this serializer *also* nests `OrganizationSerializer`, which leaks
+  the org `api_key` — left untouched here (that's the deferred ②③ item).
+- **Upstream-relevant:** **yes.**

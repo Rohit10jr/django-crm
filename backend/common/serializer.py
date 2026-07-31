@@ -664,9 +664,23 @@ class APISettingsListSerializer(serializers.ModelSerializer):
     def get_tags(self, obj):
         return obj.tags.all().values()
 
+    def to_representation(self, instance):
+        # bug 27: the lead-capture apikey is a secret; do not leak it to
+        # non-admin org members. Admins still receive it (they configure it).
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        profile = getattr(request, "profile", None) if request else None
+        is_admin = bool(profile) and (
+            profile.role == "ADMIN" or getattr(profile, "is_admin", False)
+        )
+        if not is_admin:
+            data.pop("apikey", None)
+        return data
+
     class Meta:
         model = APISettings
         fields = [
+            "id",
             "title",
             "apikey",
             "website",
