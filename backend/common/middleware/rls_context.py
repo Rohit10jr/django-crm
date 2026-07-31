@@ -22,6 +22,7 @@ Usage in settings.py:
 import logging
 
 from django.db import connection
+from django.http import JsonResponse
 
 logger = logging.getLogger(__name__)
 
@@ -65,23 +66,25 @@ class SetOrgContext:
 
         try:
             with connection.cursor() as cursor:
-                # Set the session variable
+                # Set the session variable (is_local=false for session scope)
+                # Required because Django uses autocommit mode by default
                 cursor.execute(
-                    "SELECT set_config('app.current_org', %s, true)", [org_id]
+                    "SELECT set_config('app.current_org', %s, false)", [org_id]
                 )
-                logger.debug(f"Set RLS context: app.current_org = {org_id}")
+                logger.debug("Set RLS context: app.current_org = %s", org_id)
 
         except Exception as e:
             # RLS might not be configured - log but don't fail
-            logger.debug(f"Could not set RLS context: {e}")
+            logger.debug("Could not set RLS context: %s", e)
 
     def _reset_org_context(self):
         """
         Reset the PostgreSQL session variable after request.
+        Critical to prevent context leakage between requests on pooled connections.
         """
         try:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT set_config('app.current_org', '', true)")
+                cursor.execute("SELECT set_config('app.current_org', '', false)")
         except Exception:
             pass
 
@@ -104,16 +107,20 @@ class RequireOrgContext:
 
     # Paths that don't require org context
     EXEMPT_PATHS = [
-        "/api/auth/login/",
-        "/api/auth/register/",
         "/api/auth/refresh-token/",
         "/api/auth/me/",
         "/api/auth/switch-org/",
         "/api/auth/google/",
+        "/api/auth/magic-link/request/",
+        "/api/auth/magic-link/verify/",
+        "/api/auth/magic-link/verify-code/",
         "/api/org/",
         "/admin/",
         "/swagger-ui/",
         "/api/schema/",
+        # Public CSAT survey link (Tier 2 csat) — anonymous, sets RLS
+        # context manually inside the view from the survey's own org_id.
+        "/api/public/csat/",
     ]
 
     def __init__(self, get_response):
@@ -132,10 +139,9 @@ class RequireOrgContext:
                 return self.get_response(request)
 
             if not hasattr(request, "org") or request.org is None:
-                from rest_framework.exceptions import PermissionDenied
-
-                raise PermissionDenied(
-                    "Organization context is required. Please login again."
+                return JsonResponse(
+                    {"detail": "Organization context is required. Please login again."},
+                    status=403,
                 )
 
         # Set org context
@@ -153,7 +159,7 @@ class RequireOrgContext:
         return any(path.startswith(exempt) for exempt in self.EXEMPT_PATHS)
 
     def _set_org_context(self, request):
-        """Set PostgreSQL session variable."""
+        """Set PostgreSQL session variable (session scope for autocommit mode)."""
         if not hasattr(request, "org") or request.org is None:
             return
 
@@ -162,16 +168,16 @@ class RequireOrgContext:
         try:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "SELECT set_config('app.current_org', %s, true)", [org_id]
+                    "SELECT set_config('app.current_org', %s, false)", [org_id]
                 )
         except Exception as e:
-            logger.warning(f"Failed to set RLS context: {e}")
+            logger.warning("Failed to set RLS context: %s", e)
 
     def _reset_org_context(self):
-        """Reset PostgreSQL session variable."""
+        """Reset PostgreSQL session variable after request."""
         try:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT set_config('app.current_org', '', true)")
+                cursor.execute("SELECT set_config('app.current_org', '', false)")
         except Exception:
             pass
 

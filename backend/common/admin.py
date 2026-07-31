@@ -1,7 +1,8 @@
 from django.contrib import admin
 
-from common.models import Address, Comment, CommentFiles, SessionToken, User
+from common.models import Address, Comment, CommentFiles, Org, Profile, User
 
+# Register your models here.
 
 admin.site.register(User)
 admin.site.register(Address)
@@ -9,44 +10,40 @@ admin.site.register(Comment)
 admin.site.register(CommentFiles)
 
 
-@admin.register(SessionToken)
-class SessionTokenAdmin(admin.ModelAdmin):
-    list_display = (
-        "user",
-        "token_jti_short",
-        "is_active",
-        "expires_at",
-        "last_used_at",
-        "created_at",
-    )
-    list_filter = ("is_active", "expires_at", "created_at")
-    search_fields = ("user__email", "token_jti", "ip_address")
-    raw_id_fields = ("user",)
-    readonly_fields = (
-        "token_jti",
-        "refresh_token_jti",
-        "created_at",
-        "last_used_at",
-        "revoked_at",
-    )
+@admin.register(Org)
+class OrgAdmin(admin.ModelAdmin):
+    list_display = ("name", "id", "is_active", "default_currency", "created_at")
+    list_filter = ("is_active", "default_currency", "created_at")
+    search_fields = ("name", "company_name", "email")
+    readonly_fields = ("api_key", "created_at", "updated_at")
     date_hierarchy = "created_at"
     ordering = ("-created_at",)
-    actions = ["revoke_tokens", "cleanup_expired"]
 
-    def token_jti_short(self, obj):
-        return f"{obj.token_jti[:16]}..."
 
-    token_jti_short.short_description = "Token JTI"
+@admin.register(Profile)
+class ProfileAdmin(admin.ModelAdmin):
+    list_display = (
+        "user",
+        "org",
+        "role",
+        "is_organization_admin",
+        "is_active",
+        "created_at",
+    )
+    list_filter = ("role", "is_organization_admin", "is_active", "created_at")
+    search_fields = ("user__email", "org__name")
+    raw_id_fields = ("user", "org")
+    readonly_fields = ("created_at", "updated_at")
+    date_hierarchy = "created_at"
+    ordering = ("-created_at",)
 
-    def revoke_tokens(self, request, queryset):
-        for token in queryset:
-            token.revoke()
-        self.message_user(request, f"{queryset.count()} tokens revoked successfully.")
 
-    revoke_tokens.short_description = "Revoke selected tokens"
+# Auto-register any remaining models in this app for admin browsing.
+from django.apps import apps as _apps  # noqa: E402
+from django.contrib.admin.sites import AlreadyRegistered as _AlreadyRegistered  # noqa: E402
 
-    def cleanup_expired(self, request, queryset):
-        count, _ = SessionToken.cleanup_expired()
-        self.message_user(request, f"{count} expired tokens cleaned up.")
-
-    cleanup_expired.short_description = "Cleanup expired tokens"
+for _model in _apps.get_app_config("common").get_models():
+    try:
+        admin.site.register(_model)
+    except _AlreadyRegistered:
+        pass

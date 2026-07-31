@@ -19,8 +19,8 @@ AWS_S3_OBJECT_PARAMETERS = {
 DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
 DEFAULT_S3_PATH = "media"
 
-MEDIA_ROOT = "/%s/" % DEFAULT_S3_PATH
-MEDIA_URL = "//%s/%s/" % (S3_DOMAIN, DEFAULT_S3_PATH)
+MEDIA_ROOT = f"/{DEFAULT_S3_PATH}/"
+MEDIA_URL = f"//{S3_DOMAIN}/{DEFAULT_S3_PATH}/"
 # STATIC_URL = "https://%s/" % (S3_DOMAIN)
 # ADMIN_MEDIA_PREFIX = STATIC_URL + "admin/"
 
@@ -33,8 +33,8 @@ AWS_S3_SECURE_URLS = True
 EMAIL_BACKEND = "django_ses.SESBackend"
 
 SESSION_COOKIE_DOMAIN = ".bottlecrm.io"
-SESSION_COOKIE_SECURE = True      # Only send session cookie over HTTPS
-CSRF_COOKIE_SECURE = True         # Only send CSRF cookie over HTTPS
+SESSION_COOKIE_SECURE = True  # Only send session cookie over HTTPS
+CSRF_COOKIE_SECURE = True  # Only send CSRF cookie over HTTPS
 
 sentry_sdk.init(
     dsn=os.environ["SENTRY_DSN"],

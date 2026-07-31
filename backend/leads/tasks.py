@@ -1,36 +1,47 @@
+import logging
 import re
 
-from celery import Celery
+from celery import shared_task
 from django.conf import settings
-from django.core.cache import cache
 from django.core.mail import EmailMessage, EmailMultiAlternatives
 from django.db.models import Q
 from django.template.loader import render_to_string
 
+logger = logging.getLogger(__name__)
+
 from accounts.models import Account
 from common.models import Org, Profile
+from common.tasks import set_rls_context
 from leads.models import Lead
 
-app = Celery("redis://")
 
-
-def get_rendered_html(template_name, context={}):
+def get_rendered_html(template_name, context=None):
+    if context is None:
+        context = {}
     html_content = render_to_string(template_name, context)
     return html_content
 
 
-@app.task
+@shared_task
 def send_email(
     subject,
     html_content,
     text_content=None,
     from_email=None,
-    recipients=[],
-    attachments=[],
-    bcc=[],
-    cc=[],
+    recipients=None,
+    attachments=None,
+    bcc=None,
+    cc=None,
 ):
     # send email to user with attachment
+    if recipients is None:
+        recipients = []
+    if attachments is None:
+        attachments = []
+    if bcc is None:
+        bcc = []
+    if cc is None:
+        cc = []
     if not from_email:
         from_email = settings.DEFAULT_FROM_EMAIL
     if not text_content:
@@ -45,8 +56,9 @@ def send_email(
     email.send()
 
 
-@app.task
-def send_lead_assigned_emails(lead_id, new_assigned_to_list, site_address):
+@shared_task
+def send_lead_assigned_emails(lead_id, new_assigned_to_list, site_address, org_id):
+    set_rls_context(org_id)
     lead_instance = Lead.objects.filter(
         ~Q(status="converted"), pk=lead_id, is_active=True
     ).first()
@@ -54,7 +66,7 @@ def send_lead_assigned_emails(lead_id, new_assigned_to_list, site_address):
         return False
 
     users = Profile.objects.filter(id__in=new_assigned_to_list).distinct()
-    subject = "Lead '%s' has been assigned to you" % lead_instance
+    subject = f"Lead '{lead_instance}' has been assigned to you"
     from_email = settings.DEFAULT_FROM_EMAIL
     template_name = "assigned_to/leads_assigned.html"
 
@@ -73,11 +85,13 @@ def send_lead_assigned_emails(lead_id, new_assigned_to_list, site_address):
             mail_kwargs["html_content"] = html_content
             mail_kwargs["recipients"] = [profile.user.email]
             send_email.delay(**mail_kwargs)
+    return None
 
 
-@app.task
-def send_email_to_assigned_user(recipients, lead_id, source=""):
+@shared_task
+def send_email_to_assigned_user(recipients, lead_id, org_id, source=""):
     """Send Mail To Users When they are assigned to a lead"""
+    set_rls_context(org_id)
     lead = Lead.objects.get(id=lead_id)
     created_by = lead.created_by
     for user in recipients:
@@ -97,14 +111,22 @@ def send_email_to_assigned_user(recipients, lead_id, source=""):
             )
             msg = EmailMessage(subject, html_content, to=recipients_list)
             msg.content_subtype = "html"
-            msg.send()
+            try:
+                msg.send()
+            except Exception as e:
+                logger.error(
+                    "Failed to send lead assignment email to %s: %s",
+                    profile.user.email,
+                    e,
+                )
 
 
-@app.task
+@shared_task
 def create_lead_from_file(validated_rows, invalid_rows, user_id, source, company_id):
     """Parameters : validated_rows, invalid_rows, user_id.
     This function is used to create leads from a given file.
     """
+    set_rls_context(company_id)
     email_regex = r"^[_a-zA-Z0-9-]+(\.[_a-zA-Z0-9-]+)*@[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*(\.[a-zA-Z]{2,4})$"
     profile = Profile.objects.get(id=user_id)
     org = Org.objects.filter(id=company_id).first()
@@ -134,26 +156,8 @@ def create_lead_from_file(validated_rows, invalid_rows, user_id, source, company
                         ).first()
                         if company:
                             lead.company = company
-                    lead.created_from_site = False
                     lead.created_by = profile
                     lead.org = org
                     lead.save()
-                except Exception as e:
-                    print(e)
-
-
-@app.task
-def update_leads_cache():
-    queryset = (
-        Lead.objects.all()
-        .exclude(status="converted")
-        .select_related("created_by")
-        .prefetch_related(
-            "tags",
-            "assigned_to",
-        )
-    )
-    open_leads = queryset.exclude(status="closed")
-    close_leads = queryset.filter(status="closed")
-    cache.set("admin_leads_open_queryset", open_leads, 60 * 60)
-    cache.set("admin_leads_close_queryset", close_leads, 60 * 60)
+                except Exception:
+                    pass

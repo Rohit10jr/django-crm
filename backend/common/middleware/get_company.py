@@ -1,26 +1,14 @@
-import logging 
+import logging
 
-import jwt 
-from crum import get_current_user
-from django.conf import settings
-from django.contrib.auth import logout 
-from django.core.exceptions import PermissionDenied, ValidationError
-from django.utils.functional import SimpleLazyObject
-from rest_framework import status 
+from django.core.exceptions import PermissionDenied
 from rest_framework.exceptions import AuthenticationFailed
 
-from common.models import Org, Profile, User
+from common.models import Org, Profile
 
 logger = logging.getLogger(__name__)
 
-# [??] not used here
-def get_actual_value(request):
-    if request.user is None:
-        return None
-    return request.user
 
-
-class GetProfileAndOrg(object):
+class GetProfileAndOrg:
     """
     Middleware to extract and validate organization context from JWT tokens.
 
@@ -30,23 +18,22 @@ class GetProfileAndOrg(object):
     The org context is cryptographically verified as part of the JWT signature.
     """
 
-
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
         self.process_request(request)
         return self.get_response(request)
-    
+
     def process_request(self, request):
         # Skip JWT validation for authentication endpoints that don't need org context
         auth_skip_paths = [
-            "/api/auth/login/",
             "/api/auth/google/",
-            "/api/auth/register/",
             "/api/auth/refresh-token/",
             "/api/auth/me/",
             "/api/auth/switch-org/",
+            "/api/auth/magic-link/request/",
+            "/api/auth/magic-link/verify/",
         ]
         if request.path in auth_skip_paths:
             return
@@ -54,6 +41,15 @@ class GetProfileAndOrg(object):
         # Initialize request attributes
         request.profile = None
         request.org = None
+
+        # Personal Access Token (agent / MCP) — resolve here so org context is
+        # set before RequireOrgContext runs (DRF auth runs too late for that).
+        # MUST come before the JWT branch so a PAT bearer is never handed to
+        # the JWT decoder.
+        raw_pat = self._extract_pat(request)
+        if raw_pat:
+            self._process_pat_auth(request, raw_pat)
+            return
 
         # Try JWT token first (primary authentication)
         if request.headers.get("Authorization"):
@@ -65,7 +61,43 @@ class GetProfileAndOrg(object):
         if api_key:
             self._process_api_key_auth(request, api_key)
             return
-        
+
+    def _extract_pat(self, request):
+        """Return a bcrm_pat_-prefixed token from the request, else None.
+
+        Reuses the same extractor as the DRF auth class so the detection logic
+        (Authorization: Bearer … or the Token header) lives in one place.
+        """
+        from common.pat_auth import _extract_raw
+
+        return _extract_raw(request)
+
+    def _process_pat_auth(self, request, raw):
+        """Resolve a PAT and set org context, mirroring the JWT/org-key paths.
+
+        On an invalid/revoked/expired PAT we leave request.org unset so that
+        RequireOrgContext returns a clean 403 (the same denial the org-key path
+        produces for an unknown key once that exception surfaces). We swallow
+        AuthenticationFailed here rather than re-raising so the request is
+        denied cleanly downstream instead of 500-ing inside middleware.
+        """
+        from rest_framework.exceptions import AuthenticationFailed
+
+        from common.pat_auth import resolve_valid_pat
+
+        try:
+            pat = resolve_valid_pat(raw)
+        except AuthenticationFailed:
+            # Leave org unset → RequireOrgContext denies with 403. The DRF
+            # PATAuthentication class will also raise on this token, but the
+            # middleware-level denial happens first.
+            return
+        request.profile = pat.profile
+        request.org = pat.org
+        request.META["org"] = str(pat.org.id)
+        request.META["mcp_token_id"] = str(pat.id)
+        request._pat = pat
+
     def _process_jwt_auth(self, request):
         """
         Process JWT authentication and extract org context from token.
@@ -88,9 +120,9 @@ class GetProfileAndOrg(object):
             if not org_id:
                 # Token doesn't have org context - this is allowed for some endpoints
                 # like /api/auth/me/ or initial login
-                logger.debug(f"JWT token for user {user_id} has no org_id claim")
+                logger.debug("JWT token for user %s has no org_id claim", user_id)
                 return
-        
+
             # Validate user membership in the org
             try:
                 profile = Profile.objects.select_related("org").get(
@@ -98,37 +130,33 @@ class GetProfileAndOrg(object):
                 )
                 request.profile = profile
                 request.org = profile.org
-                logger.debug(f"Set org context from JWT: user={user_id}, org={org_id}")
+                logger.debug("Set org context from JWT: user=%s, org=%s", user_id, org_id)
 
-            except Profile.DoesNotExist:
+            except Profile.DoesNotExist as exc:
                 # User doesn't have access to this org anymore
                 # This can happen if membership was revoked after token was issued
                 logger.warning(
-                    f"User {user_id} no longer has access to org {org_id}. "
-                    "Token may be stale."
+                    "User %s no longer has access to org %s. Token may be stale.",
+                    user_id,
+                    org_id,
                 )
                 raise PermissionDenied(
                     "You no longer have access to this organization. "
                     "Please login again."
-                )
+                ) from exc
 
         except (IndexError, KeyError) as e:
-            logger.warning(f"Malformed Authorization header: {e}")
+            logger.warning("Malformed Authorization header: %s", e)
             # Let DRF authentication handle this
             return
 
         except Exception as e:
-            logger.warning(f"JWT validation failed: {e}")
+            logger.warning("JWT validation failed: %s", e)
             # Let DRF authentication handle invalid tokens
             return
 
     def _process_api_key_auth(self, request, api_key):
-        """
-        Process API key authentication.
-
-        Note: API keys are scoped to a specific org and use an admin profile.
-        TODO: Create dedicated API key model with granular permissions.
-        """
+        """Process API key authentication."""
         try:
             organization = Org.objects.get(api_key=api_key, is_active=True)
 
@@ -138,15 +166,15 @@ class GetProfileAndOrg(object):
             ).first()
 
             if not profile:
-                logger.error(f"No active admin profile found for org {organization.id}")
+                logger.error("No active admin profile found for org %s", organization.id)
                 raise AuthenticationFailed("Invalid API Key configuration")
 
             request.profile = profile
             request.org = organization
             request.META["org"] = str(organization.id)
 
-            logger.debug(f"Set org context from API key: org={organization.id}")
+            logger.debug("Set org context from API key: org=%s", organization.id)
 
-        except Org.DoesNotExist:
-            logger.warning(f"Invalid API key attempted: {api_key[:8]}...")
-            raise AuthenticationFailed("Invalid API Key")
+        except Org.DoesNotExist as exc:
+            logger.warning("Invalid API key attempted")
+            raise AuthenticationFailed("Invalid API Key") from exc

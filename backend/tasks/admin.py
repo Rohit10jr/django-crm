@@ -6,11 +6,6 @@ from tasks.models import Board, BoardColumn, BoardMember, BoardTask, Task
 admin.site.register(Task)
 
 
-# =============================================================================
-# Kanban Board Admin (merged from boards app)
-# =============================================================================
-
-
 @admin.register(Board)
 class BoardAdmin(admin.ModelAdmin):
     list_display = ("name", "owner", "org", "is_archived", "created_at")
@@ -50,3 +45,14 @@ class BoardTaskAdmin(admin.ModelAdmin):
     search_fields = ("title", "description")
     raw_id_fields = ("column", "account", "contact", "opportunity")
     filter_horizontal = ("assigned_to",)
+
+
+# Auto-register any remaining models in this app for admin browsing.
+from django.apps import apps as _apps  # noqa: E402
+from django.contrib.admin.sites import AlreadyRegistered as _AlreadyRegistered  # noqa: E402
+
+for _model in _apps.get_app_config("tasks").get_models():
+    try:
+        admin.site.register(_model)
+    except _AlreadyRegistered:
+        pass

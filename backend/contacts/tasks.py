@@ -1,17 +1,17 @@
-from celery import Celery 
+from celery import shared_task
 from django.conf import settings
 from django.core.mail import EmailMessage
 from django.template.loader import render_to_string
 
-from common.models import Profile 
+from common.models import Profile
+from common.tasks import set_rls_context
 from contacts.models import Contact
 
-app = Celery("redis://")
 
-# [??] why have same task in almost every app
-@app.task 
-def send_email_to_assigned_user(recipients, contact_id):
-    """Send Mail to Users when they are assigned to a contact"""
+@shared_task
+def send_email_to_assigned_user(recipients, contact_id, org_id):
+    """Send Mail To Users When they are assigned to a contact"""
+    set_rls_context(org_id)
     contact = Contact.objects.get(id=contact_id)
     created_by = contact.created_by
     for profile_id in recipients:

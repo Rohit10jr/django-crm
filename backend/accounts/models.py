@@ -1,14 +1,19 @@
-import arrow
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q
+from django.db.models.functions import Lower
 from django.utils.translation import gettext_lazy as _
-from django.utils.translation import pgettext_lazy
-from phonenumber_field.modelfields import PhoneNumberField
 
 from common.base import AssignableMixin, BaseModel
 from common.models import Org, Profile, Tags, Teams
-from common.utils import COUNTRIES, INDCHOICES
-# from contacts.models import Contact
+from common.utils import COUNTRIES, CURRENCY_CODES, INDCHOICES
+from common.validators import flexible_phone_validator
+from contacts.models import Contact
+
+
+# Cleanup notes:
+# - Removed 'created_on_arrow' property (frontend computes its own timestamps)
+# - Removed 'contact_values' property (unused)
 
 
 class Account(AssignableMixin, BaseModel):
@@ -20,7 +25,13 @@ class Account(AssignableMixin, BaseModel):
     # Core Account Information
     name = models.CharField(_("Account Name"), max_length=255)
     email = models.EmailField(_("Email"), blank=True, null=True)
-    phone = PhoneNumberField(_("Phone"), null=True, blank=True)
+    phone = models.CharField(
+        _("Phone"),
+        max_length=25,
+        null=True,
+        blank=True,
+        validators=[flexible_phone_validator],
+    )
     website = models.URLField(_("Website"), blank=True, null=True)
 
     # Business Information
@@ -32,6 +43,9 @@ class Account(AssignableMixin, BaseModel):
     )
     annual_revenue = models.DecimalField(
         _("Annual Revenue"), max_digits=15, decimal_places=2, blank=True, null=True
+    )
+    currency = models.CharField(
+        _("Currency"), max_length=3, choices=CURRENCY_CODES, blank=True, null=True
     )
 
     # Address (flat fields like Lead and Contact models)
@@ -46,15 +60,21 @@ class Account(AssignableMixin, BaseModel):
     # Assignment
     assigned_to = models.ManyToManyField(Profile, related_name="account_assigned_users")
     teams = models.ManyToManyField(Teams, related_name="account_teams")
-    # contacts = models.ManyToManyField(
-    #     "contacts.Contact", related_name="account_contacts"
-    # )
+    contacts = models.ManyToManyField(
+        "contacts.Contact", related_name="account_contacts"
+    )
 
     # Tags
-    tags = models.ManyToManyField(Tags, blank=True)
+    tags = models.ManyToManyField(Tags, related_name="account_tags", blank=True)
 
     # Notes
     description = models.TextField(_("Notes"), blank=True, null=True)
+
+    custom_fields = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Per-org schema extension; values are validated against common.CustomFieldDefinition.",
+    )
 
     # System Fields
     is_active = models.BooleanField(default=True)
@@ -74,37 +94,29 @@ class Account(AssignableMixin, BaseModel):
             models.Index(fields=["industry"]),
             models.Index(fields=["org", "-created_at"]),
         ]
+        constraints = [
+            # Case-insensitive unique account name per organization
+            models.UniqueConstraint(
+                Lower("name"),
+                "org",
+                name="unique_account_name_per_org",
+            ),
+            # Annual revenue must be non-negative
+            models.CheckConstraint(
+                condition=Q(annual_revenue__gte=0) | Q(annual_revenue__isnull=True),
+                name="account_revenue_non_negative",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.name}"
-
-    def get_complete_address(self):
-        """Concatenates complete address."""
-        address_parts = [
-            self.address_line,
-            self.city,
-            self.state,
-            self.postcode,
-            self.get_country_display() if self.country else None,
-        ]
-        return ", ".join(part for part in address_parts if part)
-
-    @property
-    def created_on_arrow(self):
-        return arrow.get(self.created_at).humanize()
-
-    @property
-    def contact_values(self):
-        # [??] contacts is missing, need to add it back to the model to make this work ?
-        contacts = list(self.contacts.values_list("id", flat=True))
-        return ",".join(str(contact) for contact in contacts)
 
 
 class AccountEmail(BaseModel):
     from_account = models.ForeignKey(
         Account, related_name="sent_email", on_delete=models.SET_NULL, null=True
     )
-    # recipients = models.ManyToManyField(Contact, related_name="recieved_email")
+    recipients = models.ManyToManyField(Contact, related_name="recieved_email")
     message_subject = models.TextField(null=True)
     message_body = models.TextField(null=True)
     timezone = models.CharField(max_length=100, default="UTC")
@@ -130,7 +142,6 @@ class AccountEmail(BaseModel):
     def __str__(self):
         return f"{self.message_subject}"
 
-    # [??] maybe add the logic in clean
     def save(self, *args, **kwargs):
         """
         Ensure org follows the parent account; fallback to the first recipient's org.
@@ -141,7 +152,6 @@ class AccountEmail(BaseModel):
             if self.from_account and self.from_account.org_id:
                 self.org_id = self.from_account.org_id
             else:
-                # [??] recipients is missing, need to add it back to the model to make this work ?
                 # For unsaved m2m, recipients may not be available until after save
                 recipient = self.recipients.first() if self.pk else None
                 if recipient and recipient.org_id:
@@ -157,9 +167,9 @@ class AccountEmailLog(BaseModel):
     email = models.ForeignKey(
         AccountEmail, related_name="email_log", on_delete=models.SET_NULL, null=True
     )
-    # contact = models.ForeignKey(
-    #     Contact, related_name="contact_email_log", on_delete=models.SET_NULL, null=True
-    # )
+    contact = models.ForeignKey(
+        Contact, related_name="contact_email_log", on_delete=models.SET_NULL, null=True
+    )
     is_sent = models.BooleanField(default=False)
     org = models.ForeignKey(
         Org,
@@ -186,7 +196,6 @@ class AccountEmailLog(BaseModel):
         if not self.org_id:
             if self.email and self.email.org_id:
                 self.org_id = self.email.org_id
-            # [!!]  contact is missing
             elif self.contact and self.contact.org_id:
                 self.org_id = self.contact.org_id
         if not self.org_id:

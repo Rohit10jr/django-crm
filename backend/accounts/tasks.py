@@ -1,7 +1,4 @@
-from datetime import datetime
-
-import pytz
-from celery import Celery
+from celery import shared_task
 from django.conf import settings
 from django.core.mail import EmailMessage
 from django.template import Context, Template
@@ -9,19 +6,18 @@ from django.template.loader import render_to_string
 
 from accounts.models import Account, AccountEmail, AccountEmailLog
 from common.models import Profile
-from common.utils import convert_to_custom_timezone
-
-app = Celery("redis://")
+from common.tasks import set_rls_context
 
 
-@app.task
-def send_email(email_obj_id):
-    email_obj = Email.objects.filter(id=email_obj_id).first()
+@shared_task
+def send_email(email_obj_id, org_id):
+    set_rls_context(org_id)
+    email_obj = AccountEmail.objects.filter(id=email_obj_id).first()
     if email_obj:
         from_email = email_obj.from_email
         contacts = email_obj.recipients.all()
         for contact_obj in contacts:
-            if not EmailLog.objects.filter(
+            if not AccountEmailLog.objects.filter(
                 email=email_obj, contact=contact_obj, is_sent=True
             ).exists():
                 html = email_obj.message_body
@@ -53,23 +49,24 @@ def send_email(email_obj_id):
                     if res:
                         email_obj.rendered_message_body = html_content
                         email_obj.save()
-                        EmailLog.objects.create(
+                        AccountEmailLog.objects.create(
                             email=email_obj, contact=contact_obj, is_sent=True
                         )
-                except Exception as e:
-                    print(e)
+                except Exception:
+                    pass
 
 
-@app.task
-def send_email_to_assigned_user(recipients, from_email):
-    """Send Mail To Users When they are assigned to a contact"""
-    # [??] from_email is misleading, find and change it to appropriate name
-    account = Account.objects.filter(id=from_email).first()
+@shared_task
+def send_email_to_assigned_user(recipients, account_id, org_id):
+    """Send Mail To Users When they are assigned to an account"""
+    set_rls_context(org_id)
+    account = Account.objects.filter(id=account_id).first()
+    if not account:
+        return
     created_by = account.created_by
 
     for profile_id in recipients:
         recipients_list = []
-        # [??] check Profile.objects.filter(id__in=recipients)
         profile = Profile.objects.filter(id=profile_id, is_active=True).first()
         if profile:
             recipients_list.append(profile.user.email)
@@ -86,45 +83,3 @@ def send_email_to_assigned_user(recipients, from_email):
             msg = EmailMessage(subject, html_content, to=recipients_list)
             msg.content_subtype = "html"
             msg.send()
-
-
-@app.task
-def send_scheduled_emails():
-    email_objs = Email.objects.filter(scheduled_later=True)
-    # TODO: modify this later , since models are updated
-    for each in email_objs:
-        scheduled_date_time = each.scheduled_date_time
-        # [??] compare timezone vs datetimte
-        sent_time = datetime.now().strftime("%Y-%m-%d %H:%M")
-        sent_time = datetime.strptime(sent_time, "%Y-%m-%d %H:%M")
-        local_tz = pytz.timezone(settings.TIME_ZONE)
-        sent_time = local_tz.localize(sent_time)
-        sent_time = convert_to_custom_timezone(sent_time, each.timezone, to_utc=True)
-
-        # if (
-        #     str(each.scheduled_date_time.date()) == str(sent_time.date()) and
-        #     str(scheduled_date_time.hour) == str(sent_time.hour) and
-        #     (str(scheduled_date_time.minute + 5) < str(sent_time.minute) or
-        #     str(scheduled_date_time.minute - 5) > str(sent_time.minute))
-        # ):
-        #     send_email.delay(each.id)
-        if (
-            str(each.scheduled_date_time.date()) == str(sent_time.date())
-            and str(scheduled_date_time.hour) == str(sent_time.hour)
-            and str(scheduled_date_time.minute) == str(sent_time.minute)
-        ):
-            send_email.delay(each.id)
-
-# [!!] better logic for last task
-# from django.utils import timezone
-
-# now = timezone.now()
-
-# for email in Email.objects.filter(scheduled_later=True):
-
-#     user_time = now.astimezone(pytz.timezone(email.timezone))
-
-#     if user_time.hour == email.scheduled_date_time.hour \
-#        and user_time.minute == email.scheduled_date_time.minute:
-
-#         send_email.delay(email.id)

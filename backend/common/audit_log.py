@@ -19,7 +19,6 @@ Usage:
 import logging
 
 from django.db import models
-from django.utils import timezone
 
 from common.base import BaseModel
 
@@ -113,7 +112,7 @@ class AuditLogger:
             ip = ip.split(",")[0].strip()
         else:
             ip = request.META.get("REMOTE_ADDR")
-       
+
         return {
             "ip_address": ip,
             "user_agent": request.META.get("HTTP_USER_AGENT", "")[:500],
@@ -148,17 +147,21 @@ class AuditLogger:
                 **request_info,
             )
         except Exception as e:
-            logger.error(f"Failed to create audit log: {e}")
+            logger.error("Failed to create audit log: %s", e)
 
         # Log to Python logger
         log_level = logging.INFO if success else logging.WARNING
-        user_email = user.email if user else "anonymous"
-        org_name = org.name if org else "none"
+        user_id = str(user.id) if user else "anonymous"
+        org_id = str(org.id) if org else "none"
 
         logger.log(
             log_level,
-            f"{event_type} | user={user_email} | org={org_name} | "
-            f"ip={request_info.get('ip_address')} | {description}",
+            "%s | user_id=%s | org_id=%s | ip=%s | success=%s",
+            event_type,
+            user_id,
+            org_id,
+            request_info.get('ip_address'),
+            success,
         )
 
     def login_success(self, user, org, request=None):
@@ -192,7 +195,7 @@ class AuditLogger:
             "LOGOUT",
             user=user,
             org=org,
-            description=f"User logged out",
+            description="User logged out",
             request=request,
         )
 

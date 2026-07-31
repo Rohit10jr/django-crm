@@ -1,21 +1,23 @@
 import binascii
-import datetime
+import hashlib
 import os
+import secrets
 import time
 import uuid
 
-import arrow
-from django.contrib.auth.models import AbstractBaseUser, AbstractUser, PermissionsMixin
+from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.utils import timezone
 from django.utils.text import slugify
+from django.utils.timesince import timesince
 from django.utils.translation import gettext_lazy as _
-from phonenumber_field.modelfields import PhoneNumberField
-
-from common.base import BaseModel
-from common.templatetags.common_tags import (
+from common.base import BaseModel, BaseOrgModel
+from common.utils import (
+    COUNTRIES,
+    CURRENCY_CODES,
+    ROLES,
     is_document_file_audio,
     is_document_file_code,
     is_document_file_image,
@@ -25,14 +27,8 @@ from common.templatetags.common_tags import (
     is_document_file_video,
     is_document_file_zip,
 )
-from common.utils import COUNTRIES, ROLES
 
 from .manager import UserManager
-
-
-def img_url(self, filename):
-    hash_ = int(time.time())
-    return "%s/%s/%s" % ("profile_pics", hash_, filename)
 
 
 class User(AbstractBaseUser, PermissionsMixin):
@@ -40,6 +36,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         default=uuid.uuid4, unique=True, editable=False, db_index=True, primary_key=True
     )
     email = models.EmailField(_("email address"), blank=True, unique=True)
+    name = models.CharField(_("name"), max_length=255, blank=True, default="")
     profile_pic = models.CharField(max_length=1000, null=True, blank=True)
     activation_key = models.CharField(max_length=150, null=True, blank=True)
     key_expires = models.DateTimeField(null=True, blank=True)
@@ -57,13 +54,16 @@ class User(AbstractBaseUser, PermissionsMixin):
         db_table = "users"
         ordering = ("-is_active",)
 
+    def save(self, *args, **kwargs):
+        # On first save only, fall back to the email local-part when no name
+        # was supplied — keeps `name` non-empty without overwriting later
+        # edits (PATCHing name to "" leaves it empty by user intent).
+        if self._state.adding and not self.name and self.email:
+            self.name = self.email.split("@", 1)[0][:255]
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return self.email
-
-    # def save(self, *args, **kwargs):
-    #     """by default the expiration time is set to 2 hours"""
-    #     self.key_expires = timezone.now() + datetime.timedelta(hours=2)
-    #     super().save(*args, **kwargs)
 
 
 class Address(BaseModel):
@@ -92,50 +92,6 @@ class Address(BaseModel):
     def __str__(self):
         return self.city if self.city else ""
 
-    # [??] same but with simplier code  
-    # def get_complete_address(self):
-    #     parts = [
-    #         self.address_line,
-    #         self.street,
-    #         self.city,
-    #         self.state,
-    #         self.postcode,
-    #         self.get_country_display() if self.country else "",
-    #     ]
-    #     return ", ".join(filter(None, parts))
-
-    def get_complete_address(self):
-        address = ""
-        if self.address_line:
-            address += self.address_line
-        if self.street:
-            if address:
-                address += ", " + self.street
-            else:
-                address += self.street
-        if self.city:
-            if address:
-                address += ", " + self.city
-            else:
-                address += self.city
-        if self.state:
-            if address:
-                address += ", " + self.state
-            else:
-                address += self.state
-        if self.postcode:
-            if address:
-                address += ", " + self.postcode
-            else:
-                address += self.postcode
-        if self.country:
-            if address:
-                # [??] get_country_display missing
-                address += ", " + self.get_country_display()
-            else:
-                address += self.get_country_display()
-        return address
-
 
 def generate_unique_key():
     return str(uuid.uuid4())
@@ -145,9 +101,42 @@ class Org(BaseModel):
     name = models.CharField(max_length=100, blank=True, null=True)
     api_key = models.TextField(default=generate_unique_key, unique=True, editable=False)
     is_active = models.BooleanField(default=True)
-    # address = models.TextField(blank=True, null=True)
-    # user_limit = models.IntegerField(default=5)
-    # country = models.CharField(max_length=3, choices=COUNTRIES, blank=True, null=True)
+
+    # Company Profile (for invoices, documents, etc.)
+    company_name = models.CharField(
+        max_length=255, blank=True, help_text="Legal company name for invoices"
+    )
+    logo = models.ImageField(
+        upload_to="org_logos/", blank=True, null=True, help_text="Company logo"
+    )
+    address_line = models.CharField(max_length=255, blank=True)
+    city = models.CharField(max_length=100, blank=True)
+    state = models.CharField(max_length=100, blank=True)
+    postcode = models.CharField(max_length=20, blank=True)
+    country = models.CharField(max_length=3, choices=COUNTRIES, blank=True)
+    phone = models.CharField(max_length=25, blank=True)
+    email = models.EmailField(blank=True)
+    website = models.URLField(blank=True)
+    tax_id = models.CharField(
+        max_length=50, blank=True, help_text="Tax ID / VAT / Registration number"
+    )
+
+    # Locale settings
+    default_currency = models.CharField(
+        max_length=3, choices=CURRENCY_CODES, default="USD"
+    )
+    default_country = models.CharField(
+        max_length=2, choices=COUNTRIES, blank=True, null=True
+    )
+
+    # CSAT (Tier 2 csat). Org-level kill switch — when False, the
+    # post-close signal short-circuits before any survey email is sent.
+    csat_enabled = models.BooleanField(default=True)
+
+    # Tier 3 parent/child: when True, closing a parent case offers to
+    # cascade-close any open descendants. The endpoint still requires an
+    # explicit confirmation; this flag only controls the default state.
+    auto_close_children_on_parent_close = models.BooleanField(default=False)
 
     class Meta:
         verbose_name = "Organization"
@@ -160,10 +149,34 @@ class Org(BaseModel):
 
 
 class Tags(BaseModel):
-    """Tags for categorizing CRM entities (Accounts, Leads, Opportunities)"""
+    """Tags for categorizing CRM entities (Accounts, Leads, Opportunities, etc.)"""
 
-    name = models.CharField(max_length=20)
-    slug = models.CharField(max_length=20, blank=True)
+    COLOR_CHOICES = (
+        ("gray", "Gray"),
+        ("red", "Red"),
+        ("orange", "Orange"),
+        ("amber", "Amber"),
+        ("yellow", "Yellow"),
+        ("lime", "Lime"),
+        ("green", "Green"),
+        ("emerald", "Emerald"),
+        ("teal", "Teal"),
+        ("cyan", "Cyan"),
+        ("sky", "Sky"),
+        ("blue", "Blue"),
+        ("indigo", "Indigo"),
+        ("violet", "Violet"),
+        ("purple", "Purple"),
+        ("fuchsia", "Fuchsia"),
+        ("pink", "Pink"),
+        ("rose", "Rose"),
+    )
+
+    name = models.CharField(max_length=50)
+    slug = models.CharField(max_length=50, blank=True)
+    color = models.CharField(max_length=20, choices=COLOR_CHOICES, default="blue")
+    description = models.TextField(blank=True, default="")
+    is_active = models.BooleanField(default=True)
     org = models.ForeignKey(
         "Org",
         on_delete=models.CASCADE,
@@ -174,7 +187,7 @@ class Tags(BaseModel):
         verbose_name = "Tag"
         verbose_name_plural = "Tags"
         db_table = "tags"
-        ordering = ("-created_at",)
+        ordering = ("name",)
         unique_together = ["slug", "org"]
 
     def __str__(self):
@@ -185,57 +198,11 @@ class Tags(BaseModel):
         super().save(*args, **kwargs)
 
 
-# class User(AbstractBaseUser, PermissionsMixin):
-#     email = models.EmailField(_("email address"), blank=True, unique=True)
-#     profile_pic = models.FileField(
-#         max_length=1000, upload_to=img_url, null=True, blank=True
-#     )
-#     activation_key = models.CharField(max_length=150, null=True, blank=True)
-#     key_expires = models.DateTimeField(null=True, blank=True)
-
-
-#     USERNAME_FIELD = "email"
-#     REQUIRED_FIELDS = ["username"]
-
-#     objects = UserManager()
-
-#     def get_short_name(self):
-#         return self.username
-
-#     def documents(self):
-#         return self.document_uploaded.all()
-
-#     def get_full_name(self):
-#         full_name = None
-#         if self.first_name or self.last_name:
-#             full_name = self.first_name + " " + self.last_name
-#         elif self.username:
-#             full_name = self.username
-#         else:
-#             full_name = self.email
-#         return full_name
-
-#     @property
-#     def created_on_arrow(self):
-#         return arrow.get(self.date_joined).humanize()
-
-#     class Meta:
-#         ordering = ["-is_active"]
-
-#     def __str__(self):
-#         return self.email
-
-#     def save(self, *args, **kwargs):
-#         """by default the expiration time is set to 2 hours"""
-#         self.key_expires = timezone.now() + datetime.timedelta(hours=2)
-#         super().save(*args, **kwargs)
-
-
 class Profile(BaseModel):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="profiles")
     org = models.ForeignKey(Org, on_delete=models.CASCADE, related_name="profiles")
-    phone = PhoneNumberField(null=True, blank=True)
-    alternate_phone = PhoneNumberField(null=True, blank=True)
+    phone = models.CharField(max_length=20, null=True, blank=True)
+    alternate_phone = models.CharField(max_length=20, null=True, blank=True)
     address = models.ForeignKey(
         Address,
         related_name="address_users",
@@ -269,6 +236,7 @@ class Profile(BaseModel):
         return {
             "email": self.user.email,
             "id": self.user.id,
+            "name": self.user.name,
             "is_active": self.user.is_active,
             "profile_pic": self.user.profile_pic,
             "last_login": self.user.last_login,
@@ -293,13 +261,12 @@ class Comment(BaseModel):
     commented_by = models.ForeignKey(
         Profile, on_delete=models.CASCADE, blank=True, null=True
     )
+    is_internal = models.BooleanField(default=False, db_index=True)
     org = models.ForeignKey(
         "Org",
         on_delete=models.CASCADE,
         related_name="comments",
     )
-    # [??] add them for target models
-    # comments = GenericRelation(Comment)
 
     class Meta:
         verbose_name = "Comment"
@@ -309,19 +276,11 @@ class Comment(BaseModel):
         indexes = [
             models.Index(fields=["content_type", "object_id"]),
             models.Index(fields=["org", "-created_at"]),
+            models.Index(fields=["content_type", "object_id", "is_internal"]),
         ]
 
     def __str__(self):
         return f"{self.comment}"
-
-    def get_files(self):
-        # [??] 
-        # CommentFiles.objects.filter(comment=self)
-        return CommentFiles.objects.filter(comment_id=self)
-
-    @property
-    def commented_on_arrow(self):
-        return arrow.get(self.commented_on).humanize()
 
     def clean(self):
         """
@@ -346,9 +305,22 @@ class Comment(BaseModel):
 
 
 class CommentFiles(BaseModel):
+    """
+    File attachments for comments.
+    Security: org field added for RLS protection and org-level isolation.
+    """
+
     comment = models.ForeignKey(Comment, on_delete=models.CASCADE)
     comment_file = models.FileField(
         "File", upload_to="CommentFiles", null=True, blank=True
+    )
+    # Security fix: Add org field for RLS protection
+    org = models.ForeignKey(
+        "Org",
+        on_delete=models.CASCADE,
+        related_name="comment_files",
+        null=True,  # Temporarily nullable for migration
+        blank=True,
     )
 
     class Meta:
@@ -360,13 +332,11 @@ class CommentFiles(BaseModel):
     def __str__(self):
         return f"{self.comment.comment}"
 
-    def get_file_name(self):
-        if self.comment_file:
-            return self.comment_file.path.split("/")[-1]
-            # [??]
-            # return os.path.basename(self.comment_file.name)
-
-        return None
+    def save(self, *args, **kwargs):
+        # Auto-populate org from parent comment if not set
+        if not self.org_id and self.comment_id:
+            self.org_id = self.comment.org_id
+        super().save(*args, **kwargs)
 
 
 class Attachments(BaseModel):
@@ -426,15 +396,6 @@ class Attachments(BaseModel):
             return ("file", "fa fa-file")
         return ("file", "fa fa-file")
 
-    def get_file_type_display(self):
-        if self.attachment:
-            return self.file_type()[1]
-        return None
-
-    @property
-    def created_on_arrow(self):
-        return arrow.get(self.created_at).humanize()
-
     def clean(self):
         """
         Validate that the attachment's org matches the content object's org.
@@ -459,11 +420,10 @@ class Attachments(BaseModel):
 
 def document_path(self, filename):
     hash_ = int(time.time())
-    return "%s/%s/%s" % ("docs", hash_, filename)
+    return f"docs/{hash_}/{filename}"
 
 
 class Document(BaseModel):
-
     DOCUMENT_STATUS_CHOICE = (("active", "active"), ("inactive", "inactive"))
 
     title = models.TextField(blank=True, null=True)
@@ -511,37 +471,16 @@ class Document(BaseModel):
             return ("file", "fa fa-file")
         return ("file", "fa fa-file")
 
-    @property
-    def get_team_users(self):
-        team_user_ids = list(self.teams.values_list("users__id", flat=True))
-        return Profile.objects.filter(id__in=team_user_ids)
-
-    @property
-    def get_team_and_assigned_users(self):
-        team_user_ids = list(self.teams.values_list("users__id", flat=True))
-        assigned_user_ids = list(self.shared_to.values_list("id", flat=True))
-        user_ids = team_user_ids + assigned_user_ids
-        return Profile.objects.filter(id__in=user_ids)
-
-    @property
-    def get_assigned_users_not_in_teams(self):
-        team_user_ids = list(self.teams.values_list("users__id", flat=True))
-        assigned_user_ids = list(self.shared_to.values_list("id", flat=True))
-        user_ids = set(assigned_user_ids) - set(team_user_ids)
-        return Profile.objects.filter(id__in=list(user_ids))
-
-    @property
-    def created_on_arrow(self):
-        return arrow.get(self.created_at).humanize()
-
 
 def generate_key():
-    return binascii.hexlify(os.urandom(8)).decode()
+    # Security: Increased from 8 bytes (64 bits) to 32 bytes (256 bits)
+    return binascii.hexlify(os.urandom(32)).decode()
 
 
 class APISettings(BaseModel):
     title = models.TextField()
-    apikey = models.CharField(max_length=16, blank=True)
+    # Security: Increased max_length to accommodate 32-byte keys (64 hex chars)
+    apikey = models.CharField(max_length=64, blank=True)
     website = models.URLField(max_length=255, null=True)
     lead_assigned_to = models.ManyToManyField(
         Profile, related_name="lead_assignee_users"
@@ -568,61 +507,46 @@ class APISettings(BaseModel):
         super().save(*args, **kwargs)
 
 
-# Phase 3: JWT Token Tracking
+class MagicLinkToken(models.Model):
+    """One-time magic link tokens for passwordless authentication.
 
+    Supports two delivery modes (`delivery`):
+      - "link": classic email-link flow, the user clicks a URL containing `token`.
+      - "code": short 6-digit OTP flow for mobile clients. `code_hash` stores the
+        hashed code; `attempts` tracks failed verify attempts so we can lock the
+        row after too many guesses (codes are short, brute-force matters).
+    """
 
-class SessionToken(BaseModel):
-    """Track active JWT sessions for security"""
-
-    user = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="session_tokens"
+    DELIVERY_LINK = "link"
+    DELIVERY_CODE = "code"
+    DELIVERY_CHOICES = (
+        (DELIVERY_LINK, "Link"),
+        (DELIVERY_CODE, "Code"),
     )
-    token_jti = models.CharField(max_length=255, unique=True, db_index=True)  # JWT ID
-    refresh_token_jti = models.CharField(
-        max_length=255, unique=True, db_index=True, null=True, blank=True
+
+    id = models.UUIDField(default=uuid.uuid4, primary_key=True)
+    email = models.EmailField(db_index=True)
+    token = models.CharField(max_length=64, unique=True, db_index=True)
+    delivery = models.CharField(
+        max_length=8, choices=DELIVERY_CHOICES, default=DELIVERY_LINK
     )
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
-    user_agent = models.TextField(blank=True, null=True)
+    code_hash = models.CharField(max_length=256, blank=True, default="")
+    attempts = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
-    is_active = models.BooleanField(default=True)
-    revoked_at = models.DateTimeField(null=True, blank=True)
-    last_used_at = models.DateTimeField(auto_now=True)
+    is_used = models.BooleanField(default=False)
+    used_at = models.DateTimeField(null=True, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
 
     class Meta:
-        verbose_name = "Session Token"
-        verbose_name_plural = "Session Tokens"
-        db_table = "session_token"
+        db_table = "magic_link_token"
         ordering = ("-created_at",)
         indexes = [
-            models.Index(fields=["user", "is_active"]),
-            models.Index(fields=["token_jti"]),
-            models.Index(fields=["expires_at"]),
+            models.Index(fields=["email", "created_at"]),
         ]
 
     def __str__(self):
-        return f"{self.user.email} - {self.token_jti[:8]}..."
-
-    def revoke(self):
-        """Revoke this session token"""
-        from django.utils import timezone
-
-        self.is_active = False
-        self.revoked_at = timezone.now()
-        self.save()
-
-    @property
-    def is_expired(self):
-        """Check if token is expired"""
-        from django.utils import timezone
-
-        return timezone.now() > self.expires_at
-
-    @classmethod
-    def cleanup_expired(cls):
-        """Remove expired tokens (call via cron/celery)"""
-        from django.utils import timezone
-
-        return cls.objects.filter(expires_at__lt=timezone.now()).delete()
+        return f"MagicLink({self.email}, delivery={self.delivery}, used={self.is_used})"
 
 
 # Activity Tracking for Recent Activities Dashboard
@@ -638,6 +562,32 @@ class Activity(BaseModel):
         ("VIEW", "Viewed"),
         ("COMMENT", "Commented"),
         ("ASSIGN", "Assigned"),
+        # Cases roadmap verb registry — see docs/cases/COORDINATION_DECISIONS.md D1.
+        ("STATUS_CHANGED", "Status Changed"),
+        ("PRIORITY_CHANGED", "Priority Changed"),
+        ("ROUTED", "Routed"),
+        ("ESCALATED", "Escalated"),
+        ("REOPENED", "Reopened"),
+        ("MERGED", "Merged"),
+        ("MERGE_TARGET", "Merge Target"),
+        ("UNMERGED", "Unmerged"),
+        ("UNMERGE_TARGET", "Unmerge Target"),
+        ("LINKED_SOLUTION", "Linked Solution"),
+        ("UNLINKED_SOLUTION", "Unlinked Solution"),
+        ("WATCHED", "Watched"),
+        ("UNWATCHED", "Unwatched"),
+        ("MENTIONED", "Mentioned"),
+        ("APPROVAL_REQUESTED", "Approval Requested"),
+        ("APPROVED", "Approved"),
+        ("REJECTED", "Rejected"),
+        ("APPROVAL_CANCELLED", "Approval Cancelled"),
+        ("LINKED_ASSET", "Linked Asset"),
+        ("UNLINKED_ASSET", "Unlinked Asset"),
+        ("LINKED_JIRA", "Linked Jira"),
+        ("LINKED_PARENT", "Linked Parent"),
+        ("UNLINKED_PARENT", "Unlinked Parent"),
+        ("PARENT_CLOSED_CASCADE", "Parent Closed Cascade"),
+        ("TIME_LOGGED", "Time Logged"),
     )
 
     ENTITY_TYPE_CHOICES = (
@@ -660,12 +610,12 @@ class Activity(BaseModel):
         blank=True,
         related_name="activities",
     )
-    action = models.CharField(max_length=20, choices=ACTION_CHOICES)
-    # [??] try genericforeign key
+    action = models.CharField(max_length=32, choices=ACTION_CHOICES)
     entity_type = models.CharField(max_length=50, choices=ENTITY_TYPE_CHOICES)
     entity_id = models.UUIDField()
     entity_name = models.CharField(max_length=255, blank=True, default="")
     description = models.TextField(blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
     org = models.ForeignKey(Org, on_delete=models.CASCADE, related_name="activities")
 
     class Meta:
@@ -676,20 +626,64 @@ class Activity(BaseModel):
         indexes = [
             models.Index(fields=["org", "-created_at"]),
             models.Index(fields=["entity_type", "entity_id"]),
+            # Analytics window scans: "all Case CREATE/UPDATE rows in window".
+            models.Index(
+                fields=["org", "entity_type", "action", "created_at"],
+                name="activity_analytics_idx",
+            ),
         ]
 
     def __str__(self):
-        # [??] what is get_action_display
         return f"{self.user} {self.get_action_display()} {self.entity_type}: {self.entity_name}"
 
     @property
     def created_on_arrow(self):
-        return arrow.get(self.created_at).humanize()
+        return timesince(self.created_at) + " ago"
 
 
-# =============================================================================
-# Teams Model (merged from teams app)
-# =============================================================================
+class Notification(BaseModel):
+    """In-app notification delivered to a single recipient.
+
+    Per `docs/cases/COORDINATION_DECISIONS.md` D2 we inherit BaseModel and
+    declare our own `org` FK rather than using BaseOrgModel — RLS still
+    applies via the migration in 0018.
+    """
+
+    recipient = models.ForeignKey(
+        Profile,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+    )
+    verb = models.CharField(max_length=64)
+    actor = models.ForeignKey(
+        Profile,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="dispatched_notifications",
+    )
+    entity_type = models.CharField(max_length=50, blank=True, default="")
+    entity_id = models.UUIDField(null=True, blank=True)
+    entity_name = models.CharField(max_length=255, blank=True, default="")
+    data = models.JSONField(default=dict, blank=True)
+    link = models.CharField(max_length=500, blank=True, default="")
+    read_at = models.DateTimeField(null=True, blank=True)
+    org = models.ForeignKey(
+        Org, on_delete=models.CASCADE, related_name="notifications"
+    )
+
+    class Meta:
+        verbose_name = "Notification"
+        verbose_name_plural = "Notifications"
+        db_table = "notification"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["org", "recipient", "-created_at"]),
+            models.Index(fields=["recipient", "read_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.verb} -> {self.recipient_id}"
 
 
 class Teams(BaseModel):
@@ -707,21 +701,10 @@ class Teams(BaseModel):
     def __str__(self):
         return f"{self.name}"
 
-    @property
-    def created_on_arrow(self):
-        return arrow.get(self.created_at).humanize()
-
     def get_users(self):
-        # [??]
-        # return list(self.users.values_list("id", flat=True))
         return ",".join(
             [str(_id) for _id in list(self.users.values_list("id", flat=True))]
         )
-
-
-# =============================================================================
-# Contact Form Submission (for public website)
-# =============================================================================
 
 
 class ContactFormSubmission(BaseModel):
@@ -782,19 +765,135 @@ class ContactFormSubmission(BaseModel):
     def __str__(self):
         return f"{self.name} - {self.email} ({self.reason})"
 
-    def mark_as_read(self):
-        """Mark submission as read"""
-        if self.status == "new":
-            self.status = "read"
-            self.save()
 
-    def mark_as_replied(self, user):
-        """Mark submission as replied"""
-        self.status = "replied"
-        self.replied_by = user
-        self.replied_at = timezone.now()
-        self.save()
+class CustomFieldDefinition(BaseModel):
+    """Per-org schema extension for any supported entity (Case, Lead, ...).
 
-# [??] why this here
+    Each row defines a single field on a single target model. Values are stored
+    on the entity itself in a `custom_fields` JSONField; this row is the
+    metadata that the validator uses to coerce types, enforce required fields,
+    and validate dropdown membership.
+
+    See docs/cases/tier1/custom-fields.md.
+    """
+
+    TARGET_MODEL_CHOICES = [
+        ("Account", "Account"),
+        ("Case", "Case"),
+        ("Contact", "Contact"),
+        ("Estimate", "Estimate"),
+        ("Invoice", "Invoice"),
+        ("Lead", "Lead"),
+        ("Opportunity", "Opportunity"),
+        ("RecurringInvoice", "Recurring Invoice"),
+        ("Task", "Task"),
+    ]
+
+    FIELD_TYPE_CHOICES = [
+        ("text", "Text"),
+        ("textarea", "Textarea"),
+        ("number", "Number"),
+        ("dropdown", "Dropdown"),
+        ("date", "Date"),
+        ("checkbox", "Checkbox"),
+    ]
+
+    org = models.ForeignKey(
+        Org, on_delete=models.CASCADE, related_name="custom_field_definitions"
+    )
+    target_model = models.CharField(max_length=32, choices=TARGET_MODEL_CHOICES)
+    key = models.SlugField(max_length=64)
+    label = models.CharField(max_length=128)
+    field_type = models.CharField(max_length=16, choices=FIELD_TYPE_CHOICES)
+    options = models.JSONField(
+        blank=True,
+        null=True,
+        help_text="List of {value, label} pairs for dropdown fields.",
+    )
+    is_required = models.BooleanField(default=False)
+    is_filterable = models.BooleanField(default=False)
+    display_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = "Custom Field Definition"
+        verbose_name_plural = "Custom Field Definitions"
+        db_table = "custom_field_definition"
+        ordering = ("target_model", "display_order", "label")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["org", "target_model", "key"],
+                name="uniq_custom_field_per_org_target",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["org", "target_model", "is_active"]),
+        ]
+
+    def __str__(self):
+        return f"{self.target_model}.{self.key} ({self.label})"
+
+
+def generate_pat_raw():
+    """Return a new raw personal access token string."""
+    return f"bcrm_pat_{secrets.token_urlsafe(32)}"
+
+
+class PersonalAccessToken(BaseOrgModel):
+    """
+    Per-user token for programmatic/agent (MCP) access.
+
+    The agent authenticates AS `profile` and inherits that user's role,
+    org and RLS scope. The raw token is shown ONCE at creation and only
+    its SHA-256 hash is stored.
+    """
+
+    profile = models.ForeignKey(
+        "common.Profile",
+        on_delete=models.CASCADE,
+        related_name="access_tokens",
+    )
+    name = models.CharField(max_length=255)
+    token_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    token_prefix = models.CharField(max_length=20)
+    # NOTE: scopes are stored for forward-compatibility but are NOT enforced in
+    # Phase 1 — a token always inherits the owning profile's full role/permissions.
+    # Do not treat `scopes` as a trust boundary until enforcement lands.
+    scopes = models.JSONField(default=list, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "personal_access_token"
+        indexes = [models.Index(fields=["org", "-created_at"])]
+
+    @staticmethod
+    def hash_token(raw):
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    @classmethod
+    def generate(cls, profile, name, scopes=None, expires_at=None):
+        raw = generate_pat_raw()
+        pat = cls.objects.create(
+            org=profile.org,
+            profile=profile,
+            name=name,
+            token_hash=cls.hash_token(raw),
+            token_prefix=raw[:13],
+            scopes=scopes or [],
+            expires_at=expires_at,
+            created_by=profile.user,
+        )
+        return raw, pat
+
+    def is_valid(self):
+        if self.revoked_at is not None:
+            return False
+        if self.expires_at is not None and self.expires_at <= timezone.now():
+            return False
+        return True
+
+
 # Import SecurityAuditLog so Django discovers it for migrations
-from common.audit_log import SecurityAuditLog
+from common.audit_log import SecurityAuditLog  # noqa: F401,E402  # pylint: disable=unused-import
