@@ -632,6 +632,24 @@ class LeadDetailView(APIView):
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
+
+        # bug 28: PUT must enforce the same ownership gate as PATCH — otherwise a
+        # non-admin blocked from editing via PATCH could send the same change as
+        # PUT and succeed (a full overwrite, including lead->account conversion).
+        # Checked before validation so unauthorized callers get 403, not 400.
+        if self.request.profile.role != "ADMIN" and not self.request.user.is_superuser:
+            if not (
+                (self.request.profile.user == self.lead_obj.created_by)
+                or (self.request.profile in self.lead_obj.assigned_to.all())
+            ):
+                return Response(
+                    {
+                        "error": True,
+                        "errors": "You do not have Permission to perform this action",
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
         previous_assigned_to_users = list(
             self.lead_obj.assigned_to.all().values_list("id", flat=True)
         )
