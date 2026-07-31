@@ -42,6 +42,7 @@ ORG_SCOPED_TABLES = [
     "invoice",
     # Supporting entities
     "comment",
+    "commentFiles",  # Security fix: Added for RLS protection
     "attachments",
     "document",
     "teams",
@@ -49,6 +50,13 @@ ORG_SCOPED_TABLES = [
     "tags",
     "address",
     "solution",
+    "reopen_policy",
+    "custom_field_definition",
+    "escalation_policy",
+    "inbound_mailbox",
+    "email_message",
+    "routing_rule",
+    "routing_rule_state",
     # Boards (Kanban)
     "board",
     "board_column",
@@ -60,8 +68,43 @@ ORG_SCOPED_TABLES = [
     "account_email",
     "emailLogs",
     "invoice_history",
+    "invoice_line_item",
+    "invoice_template",
+    "payment",
+    "estimate",
+    "estimate_line_item",
+    "recurring_invoice",
+    "recurring_invoice_line_item",
+    # Products
+    "product",
+    # Orders
+    "orders",
+    "order_line_item",
     # Security & Audit
     "security_audit_log",
+    # Notifications
+    "notification",
+    # Case watchers (Tier 2 watchers-mentions)
+    "case_watcher",
+    # Business hours (Tier 2 business-hours-sla)
+    "business_calendar",
+    "business_holiday",
+    # Macros / canned responses (Tier 2 macros) — RLS is enabled by the
+    # migration; this entry registers the table with the central status
+    # tooling (manage_rls --status, audit verifications).
+    "macro",
+    # CSAT surveys (Tier 2 csat).
+    "csat_survey",
+    # Time tracking (Tier 3 time-tracking).
+    "time_entry",
+    # Approval workflows (Tier 3 approvals).
+    "approval_rule",
+    "approval",
+    # MCP / programmatic access
+    # NOTE: personal_access_token is intentionally NOT RLS-protected — it is an
+    # auth-bootstrap table (looked up by token_hash before any tenant context
+    # exists), mirroring the Org table. Isolation for token management is enforced
+    # by explicit org+profile filters in common/views/pat_views.py.
 ]
 
 # Centralized RLS configuration
@@ -111,10 +154,16 @@ def get_set_context_sql():
     """
     Returns SQL to set the org context.
 
+    Uses set_config with is_local=false to persist for the SESSION,
+    not just the current transaction. This is required because Django
+    uses autocommit mode by default.
+
+    The middleware must reset this after each request to prevent leakage.
+
     Usage:
         cursor.execute(get_set_context_sql(), [org_id])
     """
-    return f"SELECT set_config('{CONTEXT_VARIABLE}', %s, true)"
+    return f"SELECT set_config('{CONTEXT_VARIABLE}', %s, false)"
 
 
 def get_enable_policy_sql(table):
@@ -147,14 +196,14 @@ def get_enable_policy_sql(table):
         CREATE POLICY {ISOLATION_POLICY} ON "{table}"
             FOR ALL
             USING (
-                org_id::text = NULLIF(current_setting('{CONTEXT_VARIABLE}', true), '')
+                org_id::text = (select NULLIF(current_setting('{CONTEXT_VARIABLE}', true), ''))
             );
 
         -- Create insert check policy
         CREATE POLICY {INSERT_POLICY} ON "{table}"
             FOR INSERT
             WITH CHECK (
-                org_id::text = NULLIF(current_setting('{CONTEXT_VARIABLE}', true), '')
+                org_id::text = (select NULLIF(current_setting('{CONTEXT_VARIABLE}', true), ''))
             );
     """
 
@@ -176,39 +225,4 @@ def get_disable_policy_sql(table):
 
         -- Disable RLS
         ALTER TABLE "{table}" DISABLE ROW LEVEL SECURITY;
-    """
-
-
-def get_update_policy_sql(table):
-    """
-    Returns SQL to update RLS policies with secure defaults.
-
-    This fixes the security issue where empty context allowed all data.
-    Uses NULLIF() to ensure no rows are returned when context is missing.
-
-    Args:
-        table: Table name
-
-    Returns:
-        SQL string to execute
-    """
-    return f"""
-        -- Drop existing policies
-        DROP POLICY IF EXISTS {ISOLATION_POLICY} ON "{table}";
-        DROP POLICY IF EXISTS {INSERT_POLICY} ON "{table}";
-
-        -- Create secure isolation policy
-        -- NULLIF returns NULL when context is empty, causing comparison to fail
-        CREATE POLICY {ISOLATION_POLICY} ON "{table}"
-            FOR ALL
-            USING (
-                org_id::text = NULLIF(current_setting('{CONTEXT_VARIABLE}', true), '')
-            );
-
-        -- Create secure insert check policy
-        CREATE POLICY {INSERT_POLICY} ON "{table}"
-            FOR INSERT
-            WITH CHECK (
-                org_id::text = NULLIF(current_setting('{CONTEXT_VARIABLE}', true), '')
-            );
     """

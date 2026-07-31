@@ -1,41 +1,64 @@
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from accounts.models import Account, AccountEmail, AccountEmailLog
-from common.models import Tags
 from common.serializer import (
     AttachmentsSerializer,
     OrganizationSerializer,
     ProfileSerializer,
+    TagsSerializer,
     TeamsSerializer,
     UserSerializer,
 )
-# from contacts.serializer import ContactSerializer
+from contacts.serializer import ContactSerializer
 
-# [!!] rename TagsSerializer
-class TagsSerailizer(serializers.ModelSerializer):
-    class Meta:
-        model = Tags
-        fields = ("id", "name", "slug")
 
-# [??] use select_related() prefetch_related()
+# Note: Removed unused serializer properties that were computed but never used by frontend:
+# - get_team_users, get_team_and_assigned_users, get_assigned_users_not_in_teams
+# - created_on_arrow (frontend computes its own humanized timestamps)
+
+
 class AccountSerializer(serializers.ModelSerializer):
     """Serializer for reading Account data"""
 
     created_by = UserSerializer()
     org = OrganizationSerializer()
-    tags = TagsSerailizer(read_only=True, many=True)
+    tags = TagsSerializer(read_only=True, many=True)
     assigned_to = ProfileSerializer(read_only=True, many=True)
-    # contacts = ContactSerializer(read_only=True, many=True)
-    # [!!] serial
+    contacts = ContactSerializer(read_only=True, many=True)
     teams = TeamsSerializer(read_only=True, many=True)
     account_attachment = AttachmentsSerializer(read_only=True, many=True)
-    get_team_users = ProfileSerializer(read_only=True, many=True)
-    get_team_and_assigned_users = ProfileSerializer(read_only=True, many=True)
-    get_assigned_users_not_in_teams = ProfileSerializer(read_only=True, many=True)
-    country = serializers.SerializerMethodField()
+    country_display = serializers.SerializerMethodField()
+    cases = serializers.SerializerMethodField()
+    tasks = serializers.SerializerMethodField()
+    opportunities = serializers.SerializerMethodField()
 
-    def get_country(self, obj):
+    @extend_schema_field(str)
+    def get_country_display(self, obj):
         return obj.get_country_display() if obj.country else None
+
+    @extend_schema_field(list)
+    def get_cases(self, obj):
+        """Return cases linked to this account"""
+        return [{"id": str(c.id), "name": c.name} for c in obj.accounts_cases.all()]
+
+    @extend_schema_field(list)
+    def get_tasks(self, obj):
+        """Return tasks linked to this account"""
+        return [{"id": str(t.id), "title": t.title} for t in obj.accounts_tasks.all()]
+
+    @extend_schema_field(list)
+    def get_opportunities(self, obj):
+        """Return opportunities linked to this account"""
+        return [
+            {
+                "id": str(o.id),
+                "name": o.name,
+                "stage": o.stage,
+                "amount": str(o.amount) if o.amount else "0",
+            }
+            for o in obj.opportunities.all()
+        ]
 
     class Meta:
         model = Account
@@ -50,16 +73,17 @@ class AccountSerializer(serializers.ModelSerializer):
             "industry",
             "number_of_employees",
             "annual_revenue",
+            "currency",
             # Address
             "address_line",
             "city",
             "state",
             "postcode",
             "country",
+            "country_display",
             # Assignment
             "assigned_to",
             "teams",
-            # [!!] no contacts
             "contacts",
             # Tags
             "tags",
@@ -67,20 +91,20 @@ class AccountSerializer(serializers.ModelSerializer):
             "description",
             # Related
             "account_attachment",
+            "cases",
+            "tasks",
+            "opportunities",
             # System
             "created_by",
             "created_at",
             "is_active",
             "org",
-            "created_on_arrow",
-            "get_team_users",
-            "get_team_and_assigned_users",
-            "get_assigned_users_not_in_teams",
+            # Per-org custom fields (validated via common.custom_fields)
+            "custom_fields",
         )
 
 
 class EmailSerializer(serializers.ModelSerializer):
-    # [!!] redundant
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -119,22 +143,14 @@ class EmailLogSerializer(serializers.ModelSerializer):
     email = EmailSerializer()
 
     class Meta:
-        # [!!] contact is missing in AccountEmailLog
         model = AccountEmailLog
         fields = ["email", "contact", "is_sent"]
 
 
-class AccountReadSerializer(serializers.ModelSerializer):
-
-    class Meta:
-        model = Account
-        fields = ["name", "city", "tags"]
-
-
 class AccountWriteSerializer(serializers.ModelSerializer):
+    """Serializer for API documentation of Account write operations"""
 
     class Meta:
-        # [!!] contacts is missing in Account
         model = Account
         fields = [
             "name",
@@ -149,11 +165,6 @@ class AccountWriteSerializer(serializers.ModelSerializer):
             "state",
             "postcode",
             "country",
-            "contacts",
-            "teams",
-            "assigned_to",
-            "tags",
-            "account_attachment",
             "description",
         ]
 
@@ -193,6 +204,7 @@ class AccountCreateSerializer(serializers.ModelSerializer):
             "industry",
             "number_of_employees",
             "annual_revenue",
+            "currency",
             # Address
             "address_line",
             "city",
@@ -201,7 +213,17 @@ class AccountCreateSerializer(serializers.ModelSerializer):
             "country",
             # Notes
             "description",
+            # Status
+            "is_active",
         )
+
+    def create(self, validated_data):
+        # Default currency from org if not provided and has annual_revenue
+        if not validated_data.get("currency") and validated_data.get("annual_revenue"):
+            request = self.context.get("request")
+            if request and hasattr(request, "profile") and request.profile.org:
+                validated_data["currency"] = request.profile.org.default_currency
+        return super().create(validated_data)
 
 
 class AccountDetailEditSwaggerSerializer(serializers.Serializer):
@@ -215,7 +237,6 @@ class AccountCommentEditSwaggerSerializer(serializers.Serializer):
 
 class EmailWriteSerializer(serializers.ModelSerializer):
     class Meta:
-        # [!!] recipients is missing in AccountEmail
         model = AccountEmail
         fields = (
             "from_email",

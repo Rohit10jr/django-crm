@@ -7,7 +7,6 @@ from leads.tasks import (
     send_email_to_assigned_user,
     send_lead_assigned_emails,
 )
-# [??] missing imports
 from leads.tests import TestLeadModel
 
 
@@ -18,6 +17,7 @@ class TestCeleryTasks(TestLeadModel, TestCase):
         BROKER_BACKEND="memory",
     )
     def test_celery_tasks(self):
+        org_id = str(self.lead.org.id)
         task = send_email_to_assigned_user.apply(
             (
                 [
@@ -25,6 +25,7 @@ class TestCeleryTasks(TestLeadModel, TestCase):
                     self.user1.id,
                 ],
                 self.lead.id,
+                org_id,
             ),
         )
         self.assertEqual("SUCCESS", task.state)
@@ -38,6 +39,7 @@ class TestCeleryTasks(TestLeadModel, TestCase):
                     self.user2.id,
                 ],
                 "https://www.example.com",
+                org_id,
             ),
         )
         self.assertEqual("SUCCESS", task.state)
@@ -57,6 +59,7 @@ class TestCeleryTasks(TestLeadModel, TestCase):
         )
         self.assertEqual("SUCCESS", task.state)
 
+        org_id1 = str(self.lead1.org.id)
         task = send_lead_assigned_emails.apply(
             (
                 self.lead1.id,
@@ -66,6 +69,7 @@ class TestCeleryTasks(TestLeadModel, TestCase):
                     self.user2.id,
                 ],
                 "https://www.example.com",
+                org_id1,
             ),
         )
         self.assertEqual("SUCCESS", task.state)
@@ -129,6 +133,6 @@ class TestCeleryTasks(TestLeadModel, TestCase):
             },
         ]
         task = create_lead_from_file.apply(
-            (valid_rows, invalid_rows, self.user.id, "example.com"),
+            (valid_rows, invalid_rows, self.user.id, "example.com", org_id),
         )
         self.assertEqual("SUCCESS", task.state)

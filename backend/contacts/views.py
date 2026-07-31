@@ -3,30 +3,47 @@ import json
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
-from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema
-from rest_framework import status
+from drf_spectacular.utils import (
+    extend_schema,
+    inline_serializer,
+)
+from rest_framework import serializers, status
 from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+from common.permissions import HasOrgContext
 from rest_framework.views import APIView
 
-from common.models import Attachments, Comment, Profile, Teams
-from common.serializer import AttachmentsSerializer, CommentSerializer
+from common.custom_fields import validate_payload as validate_custom_fields_payload
+from common.models import (
+    Attachments,
+    Comment,
+    CustomFieldDefinition,
+    Profile,
+    Tags,
+    Teams,
+)
+from common.serializer import (
+    AttachmentsSerializer,
+    CommentSerializer,
+    CustomFieldDefinitionSerializer,
+)
 from common.utils import COUNTRIES
-
-# from common.external_auth import CustomDualAuthentication
 from contacts import swagger_params
-from contacts.models import Contact, Profile
-from contacts.serializer import *
+from contacts.models import Contact
+from contacts.serializer import (
+    ContactCommentEditSwaggerSerializer,
+    ContactDetailEditSwaggerSerializer,
+    ContactSerializer,
+    CreateContactSerializer,
+)
 from contacts.tasks import send_email_to_assigned_user
 from tasks.serializer import TaskSerializer
 
-# [??] can we use GenericAPIView + ListCreateAPIView
-# [!!] the serializer has contact_attachment field, view doesnt add nor the model has it 
-# please check if its a bug or wrong code
+
 class ContactsListView(APIView, LimitOffsetPagination):
-    # authentication_classes = (CustomDualAuthentication,)
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, HasOrgContext)
     model = Contact
 
     def get_context_data(self, **kwargs):
@@ -42,9 +59,11 @@ class ContactsListView(APIView, LimitOffsetPagination):
 
         if params:
             if params.get("name"):
-                queryset = queryset.filter(first_name__icontains=params.get("name"))
+                name = params.get("name")
+                queryset = queryset.filter(
+                    Q(first_name__icontains=name) | Q(last_name__icontains=name)
+                )
             if params.get("city"):
-                # [!!] city_icontains not address__city__icontains
                 queryset = queryset.filter(address__city__icontains=params.get("city"))
             if params.get("phone"):
                 queryset = queryset.filter(phone__icontains=params.get("phone"))
@@ -54,6 +73,34 @@ class ContactsListView(APIView, LimitOffsetPagination):
                 queryset = queryset.filter(
                     assigned_to__id__in=params.get("assigned_to")
                 ).distinct()
+            if params.get("tags"):
+                queryset = queryset.filter(
+                    tags__id__in=params.getlist("tags")
+                ).distinct()
+            if params.get("search"):
+                search = params.get("search")
+                queryset = queryset.filter(
+                    Q(first_name__icontains=search)
+                    | Q(last_name__icontains=search)
+                    | Q(email__icontains=search)
+                    | Q(phone__icontains=search)
+                )
+            if params.get("created_at__gte"):
+                queryset = queryset.filter(
+                    created_at__gte=params.get("created_at__gte")
+                )
+            if params.get("created_at__lte"):
+                queryset = queryset.filter(
+                    created_at__lte=params.get("created_at__lte")
+                )
+            # Custom-field filters: ?cf_<key>=<value> -> custom_fields contains pair.
+            for raw_key, raw_value in params.items():
+                if raw_key.startswith("cf_") and raw_value:
+                    cf_key = raw_key[3:]
+                    if cf_key:
+                        queryset = queryset.filter(
+                            custom_fields__contains={cf_key: raw_value}
+                        )
 
         context = {}
         results_contact = self.paginate_queryset(
@@ -84,15 +131,43 @@ class ContactsListView(APIView, LimitOffsetPagination):
 
         return context
 
-    @extend_schema(tags=["contacts"], parameters=swagger_params.contact_list_get_params)
+    @extend_schema(
+        operation_id="contacts_list",
+        tags=["contacts"],
+        parameters=swagger_params.contact_list_get_params,
+        responses={
+            200: inline_serializer(
+                name="ContactListResponse",
+                fields={
+                    "count": serializers.IntegerField(),
+                    "results": ContactSerializer(many=True),
+                    "per_page": serializers.IntegerField(),
+                    "page_number": serializers.IntegerField(),
+                    "contacts_count": serializers.IntegerField(),
+                    "offset": serializers.IntegerField(allow_null=True),
+                    "contact_obj_list": ContactSerializer(many=True),
+                },
+            )
+        },
+    )
     def get(self, request, *args, **kwargs):
         context = self.get_context_data(**kwargs)
         return Response(context)
 
     @extend_schema(
+        operation_id="contacts_create",
         tags=["contacts"],
         parameters=swagger_params.organization_params,
         request=CreateContactSerializer,
+        responses={
+            200: inline_serializer(
+                name="ContactCreateResponse",
+                fields={
+                    "error": serializers.BooleanField(),
+                    "message": serializers.CharField(),
+                },
+            )
+        },
     )
     def post(self, request, *args, **kwargs):
         params = request.data
@@ -103,49 +178,80 @@ class ContactsListView(APIView, LimitOffsetPagination):
                 {"error": True, "errors": contact_serializer.errors},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        cf_payload = params.get("custom_fields")
+        if isinstance(cf_payload, str):
+            try:
+                cf_payload = json.loads(cf_payload)
+            except (TypeError, ValueError):
+                cf_payload = None
+        cleaned_cf, cf_errors = validate_custom_fields_payload(
+            "Contact", cf_payload or {}, request.profile.org
+        )
+        if cf_errors:
+            return Response(
+                {"error": True, "errors": {"custom_fields": cf_errors}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         # Contact model uses flat address fields, no separate Address object needed
-        # [!!] how about this, serializer.save(org=request.profile.org)
-        contact_obj = contact_serializer.save()
-        contact_obj.org = request.profile.org
-        contact_obj.save()
+        contact_obj = contact_serializer.save(
+            org=request.profile.org, custom_fields=cleaned_cf
+        )
 
         if params.get("teams"):
             teams_list = params.get("teams")
-            teams = Teams.objects.filter(id__in=teams_list, org=request.profile.org)
+            if isinstance(teams_list, str):
+                teams_list = json.loads(teams_list)
+            # Extract IDs if teams_list contains objects with 'id' field
+            team_ids = [
+                item.get("id") if isinstance(item, dict) else item
+                for item in teams_list
+            ]
+            teams = Teams.objects.filter(id__in=team_ids, org=request.profile.org)
             contact_obj.teams.add(*teams)
 
         if params.get("assigned_to"):
             assinged_to_list = params.get("assigned_to")
+            if isinstance(assinged_to_list, str):
+                assinged_to_list = json.loads(assinged_to_list)
+            # Extract IDs if assinged_to_list contains objects with 'id' field
+            assigned_ids = [
+                item.get("id") if isinstance(item, dict) else item
+                for item in assinged_to_list
+            ]
             profiles = Profile.objects.filter(
-                id__in=assinged_to_list, org=request.profile.org
+                id__in=assigned_ids, org=request.profile.org
             )
             contact_obj.assigned_to.add(*profiles)
+
+        if params.get("tags"):
+            tags = params.get("tags")
+            if isinstance(tags, str):
+                tags = json.loads(tags)
+            # Extract IDs if tags contains objects with 'id' field
+            tag_ids = [
+                item.get("id") if isinstance(item, dict) else item
+                for item in tags
+            ]
+            tag_objs = Tags.objects.filter(
+                id__in=tag_ids, org=request.profile.org, is_active=True
+            )
+            contact_obj.tags.add(*tag_objs)
 
         recipients = list(contact_obj.assigned_to.all().values_list("id", flat=True))
         send_email_to_assigned_user.delay(
             recipients,
             contact_obj.id,
+            str(request.profile.org.id),
         )
 
         if request.FILES.get("contact_attachment"):
             attachment = Attachments()
             attachment.created_by = request.profile.user
             attachment.file_name = request.FILES.get("contact_attachment").name
-            # [??] attachment doesnt have contact field
-            attachment.contact = contact_obj
+            attachment.content_object = contact_obj
             attachment.attachment = request.FILES.get("contact_attachment")
+            attachment.org = request.profile.org
             attachment.save()
-            
-            # [!!] correct by Attachments model fields 
-            # attachment = Attachments()
-            # attachment.created_by = request.profile.user
-            # attachment.file_name = request.FILES["contact_attachment"].name
-            # attachment.attachment = request.FILES["contact_attachment"]
-            # attachment.org = request.profile.org
-
-            # attachment.content_type = ContentType.objects.get_for_model(Contact)
-            # attachment.object_id = contact_obj.id
-            # attachment.save()
         return Response(
             {"error": False, "message": "Contact created Successfuly"},
             status=status.HTTP_200_OK,
@@ -153,34 +259,34 @@ class ContactsListView(APIView, LimitOffsetPagination):
 
 
 class ContactDetailView(APIView):
-    # #authentication_classes = (CustomDualAuthentication,)
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, HasOrgContext)
     model = Contact
 
     def get_object(self, pk):
         return get_object_or_404(Contact, pk=pk, org=self.request.profile.org)
 
     @extend_schema(
+        operation_id="contacts_update",
         tags=["contacts"],
         parameters=swagger_params.contact_create_post_params,
         request=CreateContactSerializer,
+        responses={
+            200: inline_serializer(
+                name="ContactUpdateResponse",
+                fields={
+                    "error": serializers.BooleanField(),
+                    "message": serializers.CharField(),
+                },
+            )
+        },
     )
     def put(self, request, pk, format=None):
         data = request.data
         contact_obj = self.get_object(pk=pk)
-        # [!!] redundant org check 
         if contact_obj.org != request.profile.org:
             return Response(
                 {"error": True, "errors": "User company doesnot match with header...."},
                 status=status.HTTP_403_FORBIDDEN,
-            )
-        contact_serializer = CreateContactSerializer(
-            data=data, instance=contact_obj, request_obj=request
-        )
-        if not contact_serializer.is_valid():
-            return Response(
-                {"error": True, "errors": contact_serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST,
             )
 
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
@@ -196,22 +302,80 @@ class ContactDetailView(APIView):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-        contact_obj = contact_serializer.save()
+        contact_serializer = CreateContactSerializer(
+            data=data, instance=contact_obj, request_obj=request
+        )
+        if not contact_serializer.is_valid():
+            return Response(
+                {"error": True, "errors": contact_serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        save_kwargs = {}
+        if "custom_fields" in data:
+            cf_payload = data.get("custom_fields")
+            if isinstance(cf_payload, str):
+                try:
+                    cf_payload = json.loads(cf_payload)
+                except (TypeError, ValueError):
+                    cf_payload = None
+            cleaned_cf, cf_errors = validate_custom_fields_payload(
+                "Contact",
+                cf_payload or {},
+                request.profile.org,
+                existing=contact_obj.custom_fields or {},
+            )
+            if cf_errors:
+                return Response(
+                    {"error": True, "errors": {"custom_fields": cf_errors}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            save_kwargs["custom_fields"] = cleaned_cf
+
+        contact_obj = contact_serializer.save(**save_kwargs)
         contact_obj.teams.clear()
         if data.get("teams"):
-            teams_list = json.loads(data.get("teams"))
-            teams = Teams.objects.filter(id__in=teams_list, org=request.profile.org)
+            teams_list = data.get("teams")
+            if isinstance(teams_list, str):
+                teams_list = json.loads(teams_list)
+            # Extract IDs if teams_list contains objects with 'id' field
+            team_ids = [
+                item.get("id") if isinstance(item, dict) else item
+                for item in teams_list
+            ]
+            teams = Teams.objects.filter(id__in=team_ids, org=request.profile.org)
             contact_obj.teams.add(*teams)
 
         contact_obj.assigned_to.clear()
         if data.get("assigned_to"):
-            assinged_to_list = json.loads(data.get("assigned_to"))
+            assinged_to_list = data.get("assigned_to")
+            if isinstance(assinged_to_list, str):
+                assinged_to_list = json.loads(assinged_to_list)
+            # Extract IDs if assinged_to_list contains objects with 'id' field
+            assigned_ids = [
+                item.get("id") if isinstance(item, dict) else item
+                for item in assinged_to_list
+            ]
             profiles = Profile.objects.filter(
-                id__in=assinged_to_list, org=request.profile.org
+                id__in=assigned_ids, org=request.profile.org
             )
             contact_obj.assigned_to.add(*profiles)
 
-        # [!!] this is should come above code block
+        contact_obj.tags.clear()
+        if data.get("tags"):
+            tags = data.get("tags")
+            if isinstance(tags, str):
+                tags = json.loads(tags)
+            # Extract IDs if tags contains objects with 'id' field
+            tag_ids = [
+                item.get("id") if isinstance(item, dict) else item
+                for item in tags
+            ]
+            tag_objs = Tags.objects.filter(
+                id__in=tag_ids, org=request.profile.org, is_active=True
+            )
+            contact_obj.tags.add(*tag_objs)
+
         previous_assigned_to_users = list(
             contact_obj.assigned_to.all().values_list("id", flat=True)
         )
@@ -223,20 +387,40 @@ class ContactDetailView(APIView):
         send_email_to_assigned_user.delay(
             recipients,
             contact_obj.id,
+            str(request.profile.org.id),
         )
         if request.FILES.get("contact_attachment"):
             attachment = Attachments()
             attachment.created_by = request.profile.user
             attachment.file_name = request.FILES.get("contact_attachment").name
-            attachment.contact = contact_obj
+            attachment.content_object = contact_obj
             attachment.attachment = request.FILES.get("contact_attachment")
+            attachment.org = request.profile.org
             attachment.save()
         return Response(
             {"error": False, "message": "Contact Updated Successfully"},
             status=status.HTTP_200_OK,
         )
 
-    @extend_schema(tags=["contacts"], parameters=swagger_params.organization_params)
+    @extend_schema(
+        operation_id="contacts_retrieve",
+        tags=["contacts"],
+        parameters=swagger_params.organization_params,
+        responses={
+            200: inline_serializer(
+                name="ContactDetailResponse",
+                fields={
+                    "contact_obj": ContactSerializer(),
+                    "address_obj": serializers.DictField(),
+                    "comments": CommentSerializer(many=True),
+                    "attachments": AttachmentsSerializer(many=True),
+                    "assigned_data": serializers.ListField(),
+                    "tasks": TaskSerializer(many=True),
+                    "users_mention": serializers.ListField(),
+                },
+            )
+        },
+    )
     def get(self, request, pk, format=None):
         context = {}
         contact_obj = self.get_object(pk)
@@ -247,8 +431,6 @@ class ContactDetailView(APIView):
         user_assigned_accounts = set(
             self.request.profile.account_assigned_users.values_list("id", flat=True)
         )
-        # [!!] account_contacts is reverse relation to Account model
-        # [??] but that field is commented
         contact_accounts = set(
             contact_obj.account_contacts.values_list("id", flat=True)
         )
@@ -283,7 +465,6 @@ class ContactDetailView(APIView):
         else:
             users_mention = list(contact_obj.assigned_to.all().values("user__email"))
 
-        # [??] redundant code, no use of user_assgn_list after checking above condition 
         if request.profile == contact_obj.created_by:
             user_assgn_list.append(self.request.profile.id)
 
@@ -313,17 +494,39 @@ class ContactDetailView(APIView):
                 "attachments": AttachmentsSerializer(attachments, many=True).data,
                 "assigned_data": assigned_data,
                 "tasks": TaskSerializer(
-                    contact_obj.contacts_tasks.all(), many=True
+                    contact_obj.task_contacts.all(), many=True
                 ).data,
                 "users_mention": users_mention,
             }
         )
+
+        custom_field_defs = CustomFieldDefinition.objects.filter(
+            org=self.request.profile.org,
+            target_model="Contact",
+            is_active=True,
+        ).order_by("display_order", "label")
+        context["custom_field_definitions"] = CustomFieldDefinitionSerializer(
+            custom_field_defs, many=True
+        ).data
+
         return Response(context)
 
-    @extend_schema(tags=["contacts"], parameters=swagger_params.organization_params)
+    @extend_schema(
+        operation_id="contacts_destroy",
+        tags=["contacts"],
+        parameters=swagger_params.organization_params,
+        responses={
+            200: inline_serializer(
+                name="ContactDetailDeleteResponse",
+                fields={
+                    "error": serializers.BooleanField(),
+                    "message": serializers.CharField(),
+                },
+            )
+        },
+    )
     def delete(self, request, pk, format=None):
         self.object = self.get_object(pk)
-        # [!!] redundant logic, we use org in queryset itself.
         if self.object.org != request.profile.org:
             return Response(
                 {"error": True, "errors": "User company doesnot match with header...."},
@@ -332,7 +535,7 @@ class ContactDetailView(APIView):
         if (
             self.request.profile.role != "ADMIN"
             and not self.request.profile.is_admin
-            and self.request.profile != self.object.created_by
+            and self.request.profile.user != self.object.created_by
         ):
             return Response(
                 {
@@ -341,9 +544,6 @@ class ContactDetailView(APIView):
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
-        # [!!] contact model doesnt have address_id field nor reverse relation for address_id.  
-        if self.object.address_id:
-            self.object.address.delete()
         self.object.delete()
         return Response(
             {"error": False, "message": "Contact Deleted Successfully."},
@@ -351,14 +551,24 @@ class ContactDetailView(APIView):
         )
 
     @extend_schema(
+        operation_id="contacts_comment_attachment",
         tags=["contacts"],
         parameters=swagger_params.organization_params,
         request=ContactDetailEditSwaggerSerializer,
+        responses={
+            200: inline_serializer(
+                name="ContactCommentAttachmentResponse",
+                fields={
+                    "contact_obj": ContactSerializer(),
+                    "comments": CommentSerializer(many=True),
+                    "attachments": AttachmentsSerializer(many=True),
+                },
+            )
+        },
     )
     def post(self, request, pk, **kwargs):
         params = request.data
         context = {}
-        # [!!] missing org check
         self.contact_obj = Contact.objects.get(pk=pk)
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
@@ -376,7 +586,6 @@ class ContactDetailView(APIView):
         if comment_serializer.is_valid():
             if params.get("comment"):
                 comment_serializer.save(
-                    # [!!] these fields dont exist
                     contact_id=self.contact_obj.id,
                     commented_by_id=self.request.profile.id,
                     org=request.profile.org,
@@ -386,9 +595,9 @@ class ContactDetailView(APIView):
             attachment = Attachments()
             attachment.created_by = self.request.profile.user
             attachment.file_name = self.request.FILES.get("contact_attachment").name
-            # [!!] this doenst have contact relation
-            attachment.contact = self.contact_obj
+            attachment.content_object = self.contact_obj
             attachment.attachment = self.request.FILES.get("contact_attachment")
+            attachment.org = self.request.profile.org
             attachment.save()
 
         contact_content_type = ContentType.objects.get_for_model(Contact)
@@ -411,11 +620,134 @@ class ContactDetailView(APIView):
         )
         return Response(context)
 
+    @extend_schema(
+        tags=["contacts"],
+        parameters=swagger_params.organization_params,
+        request=CreateContactSerializer,
+        description="Partial Contact Update",
+        responses={
+            200: inline_serializer(
+                name="ContactPatchResponse",
+                fields={
+                    "error": serializers.BooleanField(),
+                    "message": serializers.CharField(),
+                },
+            )
+        },
+    )
+    def patch(self, request, pk, format=None):
+        """Handle partial updates to a contact."""
+        data = request.data
+        contact_obj = self.get_object(pk=pk)
+        if contact_obj.org != request.profile.org:
+            return Response(
+                {
+                    "error": True,
+                    "errors": "User company does not match with header....",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
+            if not (
+                (self.request.profile == contact_obj.created_by)
+                or (self.request.profile in contact_obj.assigned_to.all())
+            ):
+                return Response(
+                    {
+                        "error": True,
+                        "errors": "You do not have Permission to perform this action",
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        contact_serializer = CreateContactSerializer(
+            data=data, instance=contact_obj, request_obj=request, partial=True
+        )
+        if not contact_serializer.is_valid():
+            return Response(
+                {"error": True, "errors": contact_serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        save_kwargs = {}
+        if "custom_fields" in data:
+            cf_payload = data.get("custom_fields")
+            if isinstance(cf_payload, str):
+                try:
+                    cf_payload = json.loads(cf_payload)
+                except (TypeError, ValueError):
+                    cf_payload = None
+            cleaned_cf, cf_errors = validate_custom_fields_payload(
+                "Contact",
+                cf_payload or {},
+                request.profile.org,
+                existing=contact_obj.custom_fields or {},
+            )
+            if cf_errors:
+                return Response(
+                    {"error": True, "errors": {"custom_fields": cf_errors}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            save_kwargs["custom_fields"] = cleaned_cf
+
+        contact_obj = contact_serializer.save(**save_kwargs)
+
+        # Handle M2M fields if present in request
+        if "teams" in data:
+            contact_obj.teams.clear()
+            teams_list = data.get("teams")
+            if teams_list:
+                if isinstance(teams_list, str):
+                    teams_list = json.loads(teams_list)
+                # Extract IDs if teams_list contains objects with 'id' field
+                team_ids = [
+                    item.get("id") if isinstance(item, dict) else item
+                    for item in teams_list
+                ]
+                teams = Teams.objects.filter(id__in=team_ids, org=request.profile.org)
+                contact_obj.teams.add(*teams)
+
+        if "assigned_to" in data:
+            contact_obj.assigned_to.clear()
+            assigned_to_list = data.get("assigned_to")
+            if assigned_to_list:
+                if isinstance(assigned_to_list, str):
+                    assigned_to_list = json.loads(assigned_to_list)
+                # Extract IDs if assigned_to_list contains objects with 'id' field
+                assigned_ids = [
+                    item.get("id") if isinstance(item, dict) else item
+                    for item in assigned_to_list
+                ]
+                profiles = Profile.objects.filter(
+                    id__in=assigned_ids, org=request.profile.org
+                )
+                contact_obj.assigned_to.add(*profiles)
+
+        if "tags" in data:
+            contact_obj.tags.clear()
+            tags_list = data.get("tags")
+            if tags_list:
+                if isinstance(tags_list, str):
+                    tags_list = json.loads(tags_list)
+                # Extract IDs if tags_list contains objects with 'id' field
+                tag_ids = [
+                    tag.get("id") if isinstance(tag, dict) else tag
+                    for tag in tags_list
+                ]
+                tag_objs = Tags.objects.filter(
+                    id__in=tag_ids, org=request.profile.org, is_active=True
+                )
+                contact_obj.tags.add(*tag_objs)
+
+        return Response(
+            {"error": False, "message": "Contact Updated Successfully"},
+            status=status.HTTP_200_OK,
+        )
+
 
 class ContactCommentView(APIView):
     model = Comment
-    # #authentication_classes = (CustomDualAuthentication,)
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, HasOrgContext)
 
     def get_object(self, pk):
         return self.model.objects.get(pk=pk, org=self.request.profile.org)
@@ -424,6 +756,15 @@ class ContactCommentView(APIView):
         tags=["contacts"],
         parameters=swagger_params.organization_params,
         request=ContactCommentEditSwaggerSerializer,
+        responses={
+            200: inline_serializer(
+                name="ContactCommentUpdateResponse",
+                fields={
+                    "error": serializers.BooleanField(),
+                    "message": serializers.CharField(),
+                },
+            )
+        },
     )
     def put(self, request, pk, format=None):
         params = request.data
@@ -452,7 +793,62 @@ class ContactCommentView(APIView):
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    @extend_schema(tags=["contacts"], parameters=swagger_params.organization_params)
+    @extend_schema(
+        tags=["contacts"],
+        parameters=swagger_params.organization_params,
+        request=ContactCommentEditSwaggerSerializer,
+        description="Partial Comment Update",
+        responses={
+            200: inline_serializer(
+                name="ContactCommentPatchResponse",
+                fields={
+                    "error": serializers.BooleanField(),
+                    "message": serializers.CharField(),
+                },
+            )
+        },
+    )
+    def patch(self, request, pk, format=None):
+        """Handle partial updates to a comment."""
+        params = request.data
+        obj = self.get_object(pk)
+        if (
+            request.profile.role == "ADMIN"
+            or request.profile.is_admin
+            or request.profile == obj.commented_by
+        ):
+            serializer = CommentSerializer(obj, data=params, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                return Response(
+                    {"error": False, "message": "Comment Updated"},
+                    status=status.HTTP_200_OK,
+                )
+            return Response(
+                {"error": True, "errors": serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(
+            {
+                "error": True,
+                "errors": "You don't have permission to edit this Comment",
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    @extend_schema(
+        tags=["contacts"],
+        parameters=swagger_params.organization_params,
+        responses={
+            200: inline_serializer(
+                name="ContactCommentDeleteResponse",
+                fields={
+                    "error": serializers.BooleanField(),
+                    "message": serializers.CharField(),
+                },
+            )
+        },
+    )
     def delete(self, request, pk, format=None):
         self.object = self.get_object(pk)
         if (
@@ -473,19 +869,26 @@ class ContactCommentView(APIView):
             status=status.HTTP_403_FORBIDDEN,
         )
 
-# [!!] the admin logic is used everywhere, add them inside custom permission.
+
 class ContactAttachmentView(APIView):
     model = Attachments
-    # #authentication_classes = (CustomDualAuthentication,)
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, HasOrgContext)
 
-    @extend_schema(tags=["contacts"], parameters=swagger_params.organization_params)
+    @extend_schema(
+        tags=["contacts"],
+        parameters=swagger_params.organization_params,
+        responses={
+            200: inline_serializer(
+                name="ContactAttachmentDeleteResponse",
+                fields={
+                    "error": serializers.BooleanField(),
+                    "message": serializers.CharField(),
+                },
+            )
+        },
+    )
     def delete(self, request, pk, format=None):
         self.object = self.model.objects.get(pk=pk)
-        # [??] attachment model has org field 
-        # [!!] can we add org=request.profile.org in this query
-        # and use get_object_or_404 or allow as such ?
-        # self.object = self.model.objects.get(pk=pk, org=request.profile.org)
         if (
             request.profile.role == "ADMIN"
             or request.profile.is_admin

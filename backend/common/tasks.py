@@ -1,23 +1,19 @@
-# some methods might be redundant, check afer imlpementation
+import logging
+from datetime import timedelta
 
-import datetime 
-
-from celery ipmort Celery 
+from botocore.exceptions import ClientError
+from celery import shared_task
 from django.conf import settings
-from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import EmailMessage
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError
 from django.db import connection
 from django.template.loader import render_to_string
-from django.utils import timezone 
-from django.utils import encoding import force_bytes
-from django.utils.http import urlsafe_based64_encode
+from django.utils import timezone
 
-from common.models import Comment, Profile, Teams, User
-from common.token_generator import account_activation_token
+from common.models import Comment, MagicLinkToken, Notification, Profile, Teams, User
 
-# [!!] app = Celery("redis://")
-app = Celery("redis://")
-
+logger = logging.getLogger(__name__)
 
 
 def set_rls_context(org_id):
@@ -30,57 +26,100 @@ def set_rls_context(org_id):
     Args:
         org_id: Organization UUID (string or UUID object)
     """
+    # SQLite (test backend) has no set_config() — RLS is a Postgres feature.
+    if connection.vendor != "postgresql":
+        return
     if org_id:
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT set_config('app.current_org', %s, false)", [str(org_id)]
             )
 
-# [!!] task re-try option 
-# @app.task(bind=True, autoretry_for=(Exception,), retry_backoff=True)
-@app.task
-def send_email_to_new_user(user_id):
-    """Send Mail To Users When their account is created"""
+
+@shared_task
+def send_welcome_email(user_id):
+    """Send welcome email to newly created users."""
     user_obj = User.objects.filter(id=user_id).first()
+    if not user_obj:
+        return
 
-    if user_obj:
-        context = {}
-        user_email = user_obj.email
-        context["url"] = settings.DOMAIN_NAME
-        context["uid"] = (urlsafe_base64_encode(force_bytes(user_obj.pk)),)
-        context["token"] = account_activation_token.make_token(user_obj)
-        time_delta_two_hours = datetime.datetime.strftime(
-            timezone.now() + datetime.timedelta(hours=2), "%Y-%m-%d-%H-%M-%S"
-        )
-        # creating an activation token and saving it in user model
-        activation_key = context["token"] + time_delta_two_hours
-        user_obj.activation_key = activation_key
-        user_obj.save()
+    email = user_obj.email.strip()
+    try:
+        validate_email(email)
+    except ValidationError:
+        logger.warning("Welcome email skipped: invalid email for user %s", user_id)
+        return
 
-        context["complete_url"] = context[
-            "url"
-        ] + "/auth/activate-user/{}/{}/{}/".format(
-            context["uid"][0],
-            context["token"],
-            activation_key,
-        )
-        recipients = [
-            user_email,
-        ]
-        subject = "Welcome to Bottle CRM"
-        html_content = render_to_string("user_status_in.html", context=context)
+    context = {"url": settings.FRONTEND_URL}
+    subject = "Welcome to BottleCRM"
+    html_content = render_to_string("welcome_email.html", context=context)
 
-        msg = EmailMessage(
-            subject,
-            html_content,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            to=recipients,
-        )
-        msg.content_subtype = "html"
+    msg = EmailMessage(
+        subject,
+        html_content,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=[email],
+    )
+    msg.content_subtype = "html"
+    try:
         msg.send()
+    except ClientError:
+        logger.exception("SES rejected welcome email for user %s", user_id)
 
 
-@app.task
+@shared_task
+def send_magic_link_email(token_id, raw_code=None):
+    """Send a magic-link or OTP-code email for passwordless authentication.
+
+    For `delivery == "code"` rows, the caller passes `raw_code` (the plaintext
+    OTP) — only the hash is stored on the token row, so the plaintext can't be
+    recovered from the DB by this task.
+    """
+    magic_token = MagicLinkToken.objects.filter(id=token_id).first()
+    if not magic_token:
+        return
+
+    email = magic_token.email.strip()
+    try:
+        validate_email(email)
+    except ValidationError:
+        logger.warning("Magic link skipped: invalid email format for token %s", token_id)
+        return
+
+    if magic_token.delivery == "code":
+        if not raw_code:
+            logger.warning(
+                "Magic link skipped: raw_code missing for code-delivery token %s",
+                token_id,
+            )
+            return
+        subject = f"Your BottleCRM sign-in code: {raw_code}"
+        html_content = render_to_string(
+            "magic_link_code_email.html",
+            {"code": raw_code},
+        )
+    else:
+        magic_link_url = f"{settings.FRONTEND_URL}/login/verify?token={magic_token.token}"
+        subject = "Your BottleCRM sign-in link"
+        html_content = render_to_string(
+            "magic_link_email.html",
+            {"magic_link_url": magic_link_url},
+        )
+
+    msg = EmailMessage(
+        subject,
+        html_content,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=[email],
+    )
+    msg.content_subtype = "html"
+    try:
+        msg.send()
+    except ClientError:
+        logger.exception("SES rejected email for magic link token %s", token_id)
+
+
+@shared_task
 def send_email_user_mentions(
     comment_id,
     called_from,
@@ -150,7 +189,7 @@ def send_email_user_mentions(
                 msg.send()
 
 
-@app.task
+@shared_task
 def send_email_user_status(
     user_id,
     status_changed_user="",
@@ -190,7 +229,7 @@ def send_email_user_status(
             msg.send()
 
 
-@app.task
+@shared_task
 def send_email_user_delete(
     user_email,
     deleted_by="",
@@ -203,63 +242,8 @@ def send_email_user_delete(
         context["email"] = user_email
         recipients = []
         recipients.append(user_email)
-        subject = "CRM: Your account is Deleted."
+        subject = "CRM : Your account is Deleted. "
         html_content = render_to_string("user_delete_email.html", context=context)
-        if recipients:
-            msg = EmailMessage(
-                subject,
-                # [??] what is this html_context
-                html_context,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                to=recipients,
-            )
-            msg.content_subtype = "html"
-            # [!!] send
-            msg.send()
-
-
-
-@app.task
-def resend_activation_link_to_user(
-    user_email="",
-):
-    """Send Mail To Users When their account is created"""
-
-    user_obj = User.objects.filter(email=user_email).first()
-    user_obj.is_active = False
-    user_obj.save()
-    if user_obj:
-        context = {}
-        context["user_email"] = user_email
-        context["url"] = settings.DOMAIN_NAME
-        context["uid"] = (urlsafe_base64_encode(force_bytes(user_obj.pk)),)
-        context["token"] = account_activation_token.make_token(user_obj)
-        time_delta_two_hours = datetime.datetime.strftime(
-            timezone.now() + datetime.timedelta(hours=2), "%Y-%m-%d-%H-%M-%S"
-        )
-        context["token"] = context["token"]
-        activation_key = context["token"] + time_delta_two_hours
-        # Profile.objects.filter(user=user_obj).update(
-        #     activation_key=activation_key,
-        #     key_expires=timezone.now() + datetime.timedelta(hours=2),
-        # )
-        user_obj.activation_key = activation_key
-        user_obj.key_expires = timezone.now() + datetime.timedelta(hours=2)
-        user_obj.save()
-
-        context["complete_url"] = context[
-            "url"
-        ] + "/auth/activate_user/{}/{}/{}/".format(
-            context["uid"][0],
-            context["token"],
-            activation_key,
-        )
-        recipients = [context["complete_url"]]
-        # [??] above is bug
-        # recipients = [user_email] or recipients = [] 
-        recipients.append(user_email)
-        subject = "Welcome to Bottle CRM"
-        html_content = render_to_string("user_status_in.html", context=context)
         if recipients:
             msg = EmailMessage(
                 subject,
@@ -271,51 +255,13 @@ def resend_activation_link_to_user(
             msg.send()
 
 
-@app.task
-def send_email_to_reset_password(user_email):
-    """Send Mail To Users When their account is created"""
-    user = User.objects.filter(email=user_email).first()
-    # [!!] avoid crashing
-    # if not user:
-    #     return
-    context = {}
-    context["user_email"] = user_email
-    context["url"] = settings.DOMAIN_NAME
-    context["uid"] = (urlsafe_base64_encode(force_bytes(user.pk)),)
-    context["token"] = default_token_generator.make_token(user)
-    # [??] why token is added in context again
-    # context["token"] = context["token"]
-    context["complete_url"] = context[
-        "url"
-    ] + "/auth/reset-password/{uidb64}/{token}/".format(
-        uidb64=context["uid"][0], token=context["token"]
-    )
-    subject = "Set a New Password"
-    recipients = []
-    recipients.append(user_email)
-    html_content = render_to_string(
-        "registration/password_reset_email.html", context=context
-    )
-    if recipients:
-        msg = EmailMessage(
-            subject, html_content, from_email=settings.DEFAULT_FROM_EMAIL, to=recipients
-        )
-        msg.content_subtype = "html"
-        msg.send()
-
-# =============================================================================
-# Teams Celery Tasks (merged from teams app)
-# =============================================================================
-
-
-@app.task
-def remove_users(remove_users_list, team_id, org_id=None):
+@shared_task
+def remove_users(removed_users_list, team_id, org_id=None):
     # Set RLS context for org-scoped queries
     set_rls_context(org_id)
 
     removed_users_list = [i for i in removed_users_list if i.isdigit()]
-    # [??] removed_users is missing, should be removed_users_list
-    users_list = Profile.objects.filter(id__in=removed_users.list)
+    users_list = Profile.objects.filter(id__in=removed_users_list)
     if users_list.exists():
         team = Teams.objects.filter(id=team_id).first()
         if team:
@@ -324,50 +270,43 @@ def remove_users(remove_users_list, team_id, org_id=None):
                 for user in users_list:
                     account.assigned_to.remove(user)
 
-            # for contacts
             contacts = team.contact_teams.all()
             for contact in contacts:
                 for user in users_list:
                     contact.assigned_to.remove(user)
 
-            # for leads
             leads = team.lead_teams.all()
             for lead in leads:
                 for user in users_list:
                     lead.assigned_to.remove(user)
 
-            # for opportunities
             opportunities = team.oppurtunity_teams.all()
             for opportunity in opportunities:
                 for user in users_list:
                     opportunity.assigned_to.remove(user)
 
-            # for cases
             cases = team.cases_teams.all()
             for case in cases:
                 for user in users_list:
                     case.assigned_to.remove(user)
 
-            # for documents
             docs = team.document_teams.all()
             for doc in docs:
                 for user in users_list:
                     doc.shared_to.remove(user)
 
-            # for tasks
             tasks = team.tasks_teams.all()
             for task in tasks:
                 for user in users_list:
                     task.assigned_to.remove(user)
 
-            # for invoices
             invoices = team.invoices_teams.all()
             for invoice in invoices:
                 for user in users_list:
                     invoice.assigned_to.remove(user)
 
 
-@app.task
+@shared_task
 def update_team_users(team_id, org_id=None):
     """this function updates assigned_to field on all models when a team is updated"""
     # Set RLS context for org-scoped queries
@@ -376,7 +315,7 @@ def update_team_users(team_id, org_id=None):
     team = Teams.objects.filter(id=team_id).first()
     if team:
         teams_members = team.users.all()
-        # for accounts
+
         accounts = team.account_teams.all()
         for account in accounts:
             account_assigned_to_users = account.assigned_to.all()
@@ -384,7 +323,6 @@ def update_team_users(team_id, org_id=None):
                 if team_member not in account_assigned_to_users:
                     account.assigned_to.add(team_member)
 
-        # for contacts
         contacts = team.contact_teams.all()
         for contact in contacts:
             contact_assigned_to_users = contact.assigned_to.all()
@@ -392,7 +330,6 @@ def update_team_users(team_id, org_id=None):
                 if team_member not in contact_assigned_to_users:
                     contact.assigned_to.add(team_member)
 
-        # for leads
         leads = team.lead_teams.all()
         for lead in leads:
             lead_assigned_to_users = lead.assigned_to.all()
@@ -400,7 +337,6 @@ def update_team_users(team_id, org_id=None):
                 if team_member not in lead_assigned_to_users:
                     lead.assigned_to.add(team_member)
 
-        # for opportunities
         opportunities = team.oppurtunity_teams.all()
         for opportunity in opportunities:
             opportunity_assigned_to_users = opportunity.assigned_to.all()
@@ -408,7 +344,6 @@ def update_team_users(team_id, org_id=None):
                 if team_member not in opportunity_assigned_to_users:
                     opportunity.assigned_to.add(team_member)
 
-        # for cases
         cases = team.cases_teams.all()
         for case in cases:
             case_assigned_to_users = case.assigned_to.all()
@@ -416,7 +351,6 @@ def update_team_users(team_id, org_id=None):
                 if team_member not in case_assigned_to_users:
                     case.assigned_to.add(team_member)
 
-        # for documents
         docs = team.document_teams.all()
         for doc in docs:
             doc_assigned_to_users = doc.shared_to.all()
@@ -424,7 +358,6 @@ def update_team_users(team_id, org_id=None):
                 if team_member not in doc_assigned_to_users:
                     doc.shared_to.add(team_member)
 
-        # for tasks
         tasks = team.tasks_teams.all()
         for task in tasks:
             task_assigned_to_users = task.assigned_to.all()
@@ -432,10 +365,61 @@ def update_team_users(team_id, org_id=None):
                 if team_member not in task_assigned_to_users:
                     task.assigned_to.add(team_member)
 
-        # for invoices
         invoices = team.invoices_teams.all()
         for invoice in invoices:
             invoice_assigned_to_users = invoice.assigned_to.all()
             for team_member in teams_members:
                 if team_member not in invoice_assigned_to_users:
                     invoice.assigned_to.add(team_member)
+
+
+# Default cutoff for purging read notifications. Per
+# `docs/cases/tier2/in-app-notifications.md` "Storage growth".
+NOTIFICATION_PURGE_DAYS = 90
+
+
+@shared_task
+def purge_read_notifications(days=NOTIFICATION_PURGE_DAYS):
+    """Delete already-read notifications older than ``days`` days.
+
+    Schedule via celery-beat (recommended cadence: nightly). Runs once across
+    all orgs — RLS does not need a per-org context here because the query
+    targets `read_at`, which is intrinsic to the row, not org-scoped logic.
+    """
+    cutoff = timezone.now() - timedelta(days=days)
+    deleted, _ = Notification.objects.filter(
+        read_at__isnull=False, read_at__lt=cutoff
+    ).delete()
+    if deleted:
+        logger.info(
+            "Purged %s read notifications older than %s days", deleted, days
+        )
+    return deleted
+
+
+@shared_task
+def flush_expired_refresh_tokens():
+    """Delete refresh-token bookkeeping rows whose tokens have already expired.
+
+    `OrgAwareTokenRefreshView` rotates refresh tokens, so simplejwt writes one
+    `OutstandingToken` row per token minted and one `BlacklistedToken` row per
+    rotation. An expired token is rejected on its `exp` claim regardless of
+    blacklist state, so those rows stop carrying security value once
+    `expires_at` passes — and would otherwise grow unbounded, one row per login
+    and per refresh. Deleting the outstanding row cascades to its blacklist
+    entry.
+
+    Equivalent to simplejwt's `manage.py flushexpiredtokens`; schedule via
+    celery-beat (nightly is plenty). Not org-scoped — `expires_at` is intrinsic
+    to the row, so no RLS context is needed.
+
+    Returns the number of outstanding-token rows removed.
+    """
+    from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
+
+    expired = OutstandingToken.objects.filter(expires_at__lte=timezone.now())
+    count = expired.count()
+    if count:
+        expired.delete()
+        logger.info("Flushed %s expired refresh token records", count)
+    return count

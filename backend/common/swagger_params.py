@@ -35,7 +35,7 @@ document_get_params = [
     OpenApiParameter("shared_to", OpenApiTypes.STR, OpenApiParameter.QUERY),
 ]
 
-# Teams params
+# Teams params (merged from teams app)
 teams_list_get_params = [
     organization_params_in_header,
     OpenApiParameter("team_name", OpenApiTypes.STR, OpenApiParameter.QUERY),

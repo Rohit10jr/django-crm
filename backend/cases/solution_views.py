@@ -101,7 +101,6 @@ class SolutionDetailView(APIView):
     )
     def get(self, request, pk):
         """Get solution details"""
-        # [!!] get_object_or_404
         try:
             solution = Solution.objects.get(pk=pk, org=request.profile.org)
             serializer = SolutionDetailSerializer(solution)
@@ -186,6 +185,7 @@ class SolutionPublishView(APIView):
     @extend_schema(
         tags=["Solutions (Knowledge Base)"],
         description="Publish an approved solution",
+        request=None,
         responses={200: SolutionSerializer},
     )
     def post(self, request, pk):
@@ -221,6 +221,7 @@ class SolutionUnpublishView(APIView):
     @extend_schema(
         tags=["Solutions (Knowledge Base)"],
         description="Unpublish a solution",
+        request=None,
         responses={200: SolutionSerializer},
     )
     def post(self, request, pk):

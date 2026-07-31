@@ -2,9 +2,10 @@
 Solution (Knowledge Base) Serializers
 """
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
-from cases.models import Case, Solution
+from cases.models import Solution
 from common.serializer import OrganizationSerializer
 
 
@@ -38,10 +39,9 @@ class SolutionSerializer(serializers.ModelSerializer):
             "updated_by",
         ]
 
+    @extend_schema_field(int)
     def get_case_count(self, obj):
         """Get number of cases using this solution"""
-        # [!!] this query an cause N+1 queries in list APIs, use annotate in queryset to optimize this.
-        # Solution.objects.annotate(case_count=Count("cases"))
         return obj.cases.count()
 
 
@@ -89,9 +89,9 @@ class SolutionDetailSerializer(serializers.ModelSerializer):
             "updated_by",
         ]
 
+    @extend_schema_field(list)
     def get_linked_cases(self, obj):
         """Get cases that use this solution"""
         from cases.serializer import CaseSerializer
 
-        # [!!] prefetch_related("cases") in queryset can optimize this to avoid N+1 queries
         return CaseSerializer(obj.cases.all()[:10], many=True).data

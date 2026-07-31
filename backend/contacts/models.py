@@ -1,11 +1,12 @@
-import arrow
 from django.db import models
+from django.db.models import Q
+from django.db.models.functions import Lower
 from django.utils.translation import gettext_lazy as _
-from phonenumber_field.modelfields import PhoneNumberField
 
 from common.base import AssignableMixin, BaseModel
 from common.models import Org, Profile, Tags, Teams
 from common.utils import COUNTRIES
+from common.validators import flexible_phone_validator
 
 
 class Contact(AssignableMixin, BaseModel):
@@ -18,7 +19,13 @@ class Contact(AssignableMixin, BaseModel):
     first_name = models.CharField(_("First name"), max_length=255)
     last_name = models.CharField(_("Last name"), max_length=255)
     email = models.EmailField(_("Email"), blank=True, null=True)
-    phone = PhoneNumberField(_("Phone"), null=True, blank=True)
+    phone = models.CharField(
+        _("Phone"),
+        max_length=25,
+        null=True,
+        blank=True,
+        validators=[flexible_phone_validator],
+    )
 
     # Professional Information
     organization = models.CharField(_("Company"), max_length=255, blank=True, null=True)
@@ -29,7 +36,7 @@ class Contact(AssignableMixin, BaseModel):
 
     # Communication Preferences
     do_not_call = models.BooleanField(_("Do Not Call"), default=False)
-    linked_in_url = models.URLField(_("LinkedIn URL"), blank=True, null=True)
+    linkedin_url = models.URLField(_("LinkedIn URL"), blank=True, null=True)
 
     # Address (flat fields like Lead model)
     address_line = models.CharField(_("Address"), max_length=255, blank=True, null=True)
@@ -45,19 +52,35 @@ class Contact(AssignableMixin, BaseModel):
     teams = models.ManyToManyField(Teams, related_name="contact_teams")
 
     # Tags
-    tags = models.ManyToManyField(Tags, blank=True)
+    tags = models.ManyToManyField(Tags, related_name="contact_tags", blank=True)
 
     # Notes
     description = models.TextField(_("Notes"), blank=True, null=True)
 
     # System Fields
     is_active = models.BooleanField(default=True)
+    auto_created = models.BooleanField(
+        default=False,
+        help_text="True when the contact was created by an inbound channel "
+        "(e.g. email-to-ticket) rather than a human; flagged for admin review.",
+    )
     org = models.ForeignKey(Org, on_delete=models.CASCADE, related_name="contacts")
-    # [??] this field is required for generic relation to work on serializer
-    # contact_attachment = GenericRelation(
-    #     Attachments,
-    #     related_query_name="contact"
-    # )
+
+    # Account relationship (optional - contact can exist without an account)
+    account = models.ForeignKey(
+        "accounts.Account",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="primary_contacts",
+        help_text="Primary account this contact belongs to",
+    )
+
+    custom_fields = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Per-org schema extension; values are validated against common.CustomFieldDefinition.",
+    )
 
     class Meta:
         verbose_name = "Contact"
@@ -65,18 +88,17 @@ class Contact(AssignableMixin, BaseModel):
         db_table = "contacts"
         ordering = ("-created_at",)
         indexes = [
-            models.Index(fields=["organization"]),
             models.Index(fields=["org", "-created_at"]),
         ]
-        # [??] models.UniqueConstraint for email and org
+        constraints = [
+            # Case-insensitive unique email per organization (when email is not null)
+            models.UniqueConstraint(
+                Lower("email"),
+                "org",
+                name="unique_contact_email_per_org",
+                condition=Q(email__isnull=False) & ~Q(email=""),
+            ),
+        ]
 
     def __str__(self):
         return self.first_name
-
-    @property
-    def created_on_arrow(self):
-        return arrow.get(self.created_at).humanize()
-
-    @property
-    def created_on(self):
-        return self.created_at
