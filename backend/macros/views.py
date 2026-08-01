@@ -52,10 +52,14 @@ def _resolve_scope_and_owner(profile, payload, instance=None):
     Returns `(scope, owner_profile)` or raises a ValueError with a message
     describing the violation.
     """
-    desired_scope = payload.get(
-        "scope",
-        getattr(instance, "scope", None) or Macro.SCOPE_ORG,
-    )
+    desired_scope = payload.get("scope") or getattr(instance, "scope", None)
+    if not desired_scope:
+        # bug 16: when scope is omitted on create, default non-admins to personal
+        # (as the docstring promises) and admins to org — instead of forcing org
+        # for everyone, which 403'd a non-admin who just omitted scope.
+        desired_scope = (
+            Macro.SCOPE_ORG if _is_admin(profile) else Macro.SCOPE_PERSONAL
+        )
     if desired_scope not in (Macro.SCOPE_ORG, Macro.SCOPE_PERSONAL):
         raise ValueError("scope must be 'org' or 'personal'.")
 
@@ -72,7 +76,11 @@ class MacroListCreateView(APIView):
     def get(self, request, *args, **kwargs):
         qs = _visible_qs(request.profile)
         active_param = request.query_params.get("active")
-        if active_param is not None:
+        if active_param is None:
+            # bug 16: hide soft-deleted (inactive) macros by default; ?active=false
+            # reveals them, matching the pipelines list convention.
+            qs = qs.filter(is_active=True)
+        else:
             qs = qs.filter(is_active=(active_param.lower() == "true"))
         search = request.query_params.get("search")
         if search:

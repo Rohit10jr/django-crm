@@ -5,7 +5,8 @@ company_params_in_header = OpenApiParameter(
     "org", OpenApiTypes.STR, OpenApiParameter.HEADER, required=True
 )
 
-organization_params = [company_params_in_header]
+# bug 24: the vestigial "org" header is no longer advertised (org comes from JWT).
+organization_params = []
 
 invoice_list_get_params = organization_params + [
     OpenApiParameter(

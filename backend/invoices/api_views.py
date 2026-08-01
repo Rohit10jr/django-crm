@@ -730,6 +730,9 @@ class PaymentListView(APIView, LimitOffsetPagination):
         )
         if serializer.is_valid():
             payment = serializer.save(invoice=invoice, org=request.profile.org)
+            # bug 18: the payment save updates the invoice's amount_paid/status;
+            # refresh so the response reflects the new values (mark-paid does this).
+            invoice.refresh_from_db()
             return Response(
                 {
                     "error": False,
@@ -1724,7 +1727,12 @@ class InvoiceAttachmentDetailView(APIView):
 
     @extend_schema(tags=["Invoice Attachments"], operation_id="attachments_destroy")
     def delete(self, request, pk):
-        attachment = Attachments.objects.filter(id=pk, org=request.profile.org).first()
+        # bug 18: restrict to invoice attachments so this route can't delete
+        # another resource's attachment that merely shares the org.
+        invoice_ct = ContentType.objects.get_for_model(Invoice)
+        attachment = Attachments.objects.filter(
+            id=pk, org=request.profile.org, content_type=invoice_ct
+        ).first()
         if not attachment:
             return Response(
                 {"error": True, "message": "Attachment not found"},

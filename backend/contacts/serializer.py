@@ -19,7 +19,6 @@ class ContactSerializer(serializers.ModelSerializer):
 
     teams = TeamsSerializer(read_only=True, many=True)
     assigned_to = ProfileSerializer(read_only=True, many=True)
-    contact_attachment = AttachmentsSerializer(read_only=True, many=True)
     org = OrganizationSerializer()
 
     class Meta:
@@ -57,7 +56,6 @@ class ContactSerializer(serializers.ModelSerializer):
             "is_active",
             "org",
             "account",
-            "contact_attachment",
             # Per-org custom fields (validated via common.custom_fields)
             "custom_fields",
         )

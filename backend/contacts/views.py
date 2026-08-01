@@ -114,7 +114,7 @@ class ContactsListView(APIView, LimitOffsetPagination):
         else:
             offset = 0
         context["per_page"] = 10
-        page_number = (int(self.offset / 10) + 1,)
+        page_number = int(self.offset / 10) + 1
         context["page_number"] = page_number
         # Standard DRF pagination format for frontend compatibility
         context["count"] = self.count
