@@ -1,6 +1,7 @@
 from drf_spectacular.utils import extend_schema, inline_serializer
+from django.shortcuts import get_object_or_404
 from rest_framework import serializers, status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -201,7 +202,7 @@ class LeadAttachmentView(APIView):
         },
     )
     def delete(self, request, pk, format=None):
-        self.object = self.model.objects.get(pk=pk)
+        self.object = get_object_or_404(self.model, pk=pk, org=request.profile.org)
         if (
             request.profile.role == "ADMIN"
             or request.user.is_superuser
@@ -222,6 +223,12 @@ class LeadAttachmentView(APIView):
 
 
 class CreateLeadFromSite(APIView):
+    # Public website lead-capture: authenticated by the api_setting apikey in the
+    # request body, not a logged-in user. Declared explicitly so it stays open
+    # now that the project default permission is IsAuthenticated.
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
     @extend_schema(
         tags=["Leads"],
         parameters=swagger_params.organization_params,

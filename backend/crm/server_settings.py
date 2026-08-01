@@ -24,7 +24,9 @@ MEDIA_URL = f"//{S3_DOMAIN}/{DEFAULT_S3_PATH}/"
 # STATIC_URL = "https://%s/" % (S3_DOMAIN)
 # ADMIN_MEDIA_PREFIX = STATIC_URL + "admin/"
 
-CORS_ORIGIN_ALLOW_ALL = True
+# CORS is configured centrally in settings.py from the CORS_ALLOWED_ORIGINS /
+# CORS_ALLOW_ALL env vars, which run *after* this import and override anything
+# set here. Do not allow all origins in production.
 
 AWS_IS_GZIPPED = True
 AWS_ENABLED = True

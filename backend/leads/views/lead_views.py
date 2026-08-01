@@ -383,7 +383,9 @@ class LeadDetailView(APIView):
             assigned_to.id for assigned_to in self.lead_obj.assigned_to.all()
         ]
         if self.request.profile.user == self.lead_obj.created_by:
-            user_assgn_list.append(self.request.profile.user)
+            # bug 31: append the Profile id (not the User) so the creator's own
+            # profile.id membership test below passes; a User never equals a UUID.
+            user_assgn_list.append(self.request.profile.id)
         if self.request.profile.role != "ADMIN" and not self.request.user.is_superuser:
             if self.request.profile.id not in user_assgn_list:
                 return Response(
@@ -515,6 +517,11 @@ class LeadDetailView(APIView):
     def get(self, request, pk, **kwargs):
         self.lead_obj = self.get_object(pk)
         context = self.get_context_data(**kwargs)
+        # bug 13: get_context_data returns a Response (403) on the permission-
+        # denied path; return it directly instead of re-wrapping it in another
+        # Response (which loses the 403 status).
+        if isinstance(context, Response):
+            return context
         return Response(context)
 
     @extend_schema(
@@ -537,7 +544,7 @@ class LeadDetailView(APIView):
         params = request.data
 
         context = {}
-        self.lead_obj = Lead.objects.get(pk=pk)
+        self.lead_obj = get_object_or_404(Lead, pk=pk, org=request.profile.org)
         if self.lead_obj.org != request.profile.org:
             return Response(
                 {"error": True, "errors": "User company doesnot match with header...."},
@@ -630,6 +637,24 @@ class LeadDetailView(APIView):
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
+
+        # bug 28: PUT must enforce the same ownership gate as PATCH — otherwise a
+        # non-admin blocked from editing via PATCH could send the same change as
+        # PUT and succeed (a full overwrite, including lead->account conversion).
+        # Checked before validation so unauthorized callers get 403, not 400.
+        if self.request.profile.role != "ADMIN" and not self.request.user.is_superuser:
+            if not (
+                (self.request.profile.user == self.lead_obj.created_by)
+                or (self.request.profile in self.lead_obj.assigned_to.all())
+            ):
+                return Response(
+                    {
+                        "error": True,
+                        "errors": "You do not have Permission to perform this action",
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
         previous_assigned_to_users = list(
             self.lead_obj.assigned_to.all().values_list("id", flat=True)
         )

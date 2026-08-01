@@ -142,10 +142,10 @@ class TestOpportunityListView:
             "name": "Unauthorized Deal",
             "stage": "QUALIFICATION",
         }
-        with pytest.raises(PermissionDenied):
-            unauthenticated_client.post(
-                OPPORTUNITIES_LIST_URL, payload, format="json"
-            )
+        response = unauthenticated_client.post(
+            OPPORTUNITIES_LIST_URL, payload, format="json"
+        )
+        assert response.status_code in (401, 403)
 
     @patch("opportunity.views.opportunity_views.send_email_to_assigned_user.delay")
     def test_org_isolation(

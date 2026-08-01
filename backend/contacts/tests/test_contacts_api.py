@@ -112,10 +112,10 @@ class TestContactListView:
             "last_name": "User",
             "email": "nope@example.com",
         }
-        with pytest.raises(PermissionDenied):
-            unauthenticated_client.post(
-                CONTACTS_LIST_URL, payload, format="json"
-            )
+        response = unauthenticated_client.post(
+            CONTACTS_LIST_URL, payload, format="json"
+        )
+        assert response.status_code in (401, 403)
 
     @patch("contacts.views.send_email_to_assigned_user.delay")
     def test_org_isolation(
@@ -768,12 +768,7 @@ class TestContactListViewFilters:
         assert returned_ids == {str(first_name_match.id), str(last_name_match.id)}
 
     def test_filter_by_city(self, admin_client, admin_user, org_a):
-        """Filter by city (line 52).
-        Note: The view uses address__city__icontains but the model has flat 'city' field.
-        This exercises the branch but exposes a FieldError bug in the view.
-        """
-        from django.core.exceptions import FieldError
-
+        """Filter by the flat city column (bug 9 fixed)."""
         _set_rls(org_a)
         Contact.objects.create(
             first_name="CityFilter",
@@ -783,18 +778,13 @@ class TestContactListViewFilters:
             org=org_a,
             created_by=admin_user,
         )
-        with pytest.raises(FieldError):
-            admin_client.get(CONTACTS_LIST_URL, {"city": "Denver"})
+        response = admin_client.get(CONTACTS_LIST_URL, {"city": "Denver"})
+        assert response.status_code == status.HTTP_200_OK
 
     def test_filter_by_assigned_to(
         self, admin_client, admin_user, admin_profile, org_a
     ):
-        """Filter by assigned_to (lines 57-60).
-        Note: The view uses params.get (returns string) with __in (iterates chars),
-        which causes a ValidationError for UUID fields. We verify the branch is entered.
-        """
-        from django.core.exceptions import ValidationError
-
+        """Filter by assigned_to (getlist -> __in; bug 9 fixed)."""
         _set_rls(org_a)
         contact = Contact.objects.create(
             first_name="AssignFilter",
@@ -804,10 +794,10 @@ class TestContactListViewFilters:
             created_by=admin_user,
         )
         contact.assigned_to.add(admin_profile)
-        with pytest.raises(ValidationError):
-            admin_client.get(
-                CONTACTS_LIST_URL, {"assigned_to": str(admin_profile.id)}
-            )
+        response = admin_client.get(
+            CONTACTS_LIST_URL, {"assigned_to": str(admin_profile.id)}
+        )
+        assert response.status_code == status.HTTP_200_OK
 
     def test_filter_by_tags(self, admin_client, admin_user, org_a):
         """Filter by tags (lines 61-64)."""
@@ -1076,13 +1066,10 @@ class TestContactDetailCommentAttachment:
         assert response.status_code == status.HTTP_200_OK
         assert "contact_obj" in response.data
 
-    def test_add_comment_with_serializer_fields_hits_save_bug(
+    def test_add_comment_saves(
         self, admin_client, admin_user, admin_profile, org_a
     ):
-        """POST comment with object_id and org passes validation, but save(contact_id=...)
-        raises TypeError because contact_id is not a Comment field.
-        Exercises lines 516-517 (the save branch).
-        """
+        """POST comment creates a Comment via the generic FK (bug 8 fixed)."""
         _set_rls(org_a)
         contact = Contact.objects.create(
             first_name="CommentBug",
@@ -1091,16 +1078,15 @@ class TestContactDetailCommentAttachment:
             org=org_a,
             created_by=admin_user,
         )
-        with pytest.raises(TypeError, match="contact_id"):
-            admin_client.post(
-                _detail_url(contact.pk),
-                {
-                    "comment": "Bug test",
-                    "object_id": str(contact.id),
-                    "org": str(org_a.id),
-                },
-                format="json",
-            )
+        response = admin_client.post(
+            _detail_url(contact.pk),
+            {"comment": "Bug test"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert any(
+            c["comment"] == "Bug test" for c in response.json()["comments"]
+        )
 
     def test_add_attachment_via_post(self, admin_client, admin_user, org_a):
         """POST with contact_attachment creates attachment (lines 523-530).

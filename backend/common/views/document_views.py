@@ -224,7 +224,7 @@ class DocumentDetailView(APIView):
         self.object = self.get_object(pk)
         if self.request.profile.role != "ADMIN" and not self.request.user.is_superuser:
             if not (
-                (self.request.profile == self.object.created_by)
+                (self.request.profile.user == self.object.created_by)
                 or (self.request.profile in self.object.shared_to.all())
             ):
                 return Response(
@@ -323,7 +323,7 @@ class DocumentDetailView(APIView):
             )
         if self.request.profile.role != "ADMIN" and not self.request.user.is_superuser:
             if not (
-                (self.request.profile == self.object.created_by)
+                (self.request.profile.user == self.object.created_by)
                 or (self.request.profile in self.object.shared_to.all())
             ):
                 return Response(
@@ -417,7 +417,7 @@ class DocumentDetailView(APIView):
             )
         if self.request.profile.role != "ADMIN" and not self.request.user.is_superuser:
             if not (
-                (self.request.profile == self.object.created_by)
+                (self.request.profile.user == self.object.created_by)
                 or (self.request.profile in self.object.shared_to.all())
             ):
                 return Response(

@@ -3,6 +3,7 @@ from datetime import timedelta
 
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
@@ -364,7 +365,7 @@ class OpportunityDetailView(APIView):
             )
         if self.request.profile.role != "ADMIN" and not self.request.user.is_superuser:
             if not (
-                (self.request.profile == opportunity_object.created_by)
+                (self.request.profile.user == opportunity_object.created_by)
                 or (self.request.profile in opportunity_object.assigned_to.all())
             ):
                 return Response(
@@ -577,7 +578,7 @@ class OpportunityDetailView(APIView):
             )
         if self.request.profile.role != "ADMIN" and not self.request.user.is_superuser:
             if not (
-                (self.request.profile == self.opportunity.created_by)
+                (self.request.profile.user == self.opportunity.created_by)
                 or (self.request.profile in self.opportunity.assigned_to.all())
             ):
                 return Response(
@@ -591,7 +592,7 @@ class OpportunityDetailView(APIView):
         comment_permission = False
 
         if (
-            self.request.profile == self.opportunity.created_by
+            self.request.profile.user == self.opportunity.created_by
             or self.request.user.is_superuser
             or self.request.profile.role == "ADMIN"
         ):
@@ -672,7 +673,9 @@ class OpportunityDetailView(APIView):
     def post(self, request, pk, **kwargs):
         params = request.data
         context = {}
-        self.opportunity_obj = Opportunity.objects.get(pk=pk, org=request.profile.org)
+        self.opportunity_obj = get_object_or_404(
+            Opportunity, pk=pk, org=request.profile.org
+        )
         if self.opportunity_obj.org != request.profile.org:
             return Response(
                 {"error": True, "errors": "User company doesnot match with header...."},
@@ -680,7 +683,7 @@ class OpportunityDetailView(APIView):
             )
         if self.request.profile.role != "ADMIN" and not self.request.user.is_superuser:
             if not (
-                (self.request.profile == self.opportunity_obj.created_by)
+                (self.request.profile.user == self.opportunity_obj.created_by)
                 or (self.request.profile in self.opportunity_obj.assigned_to.all())
             ):
                 return Response(
@@ -773,7 +776,7 @@ class OpportunityDetailView(APIView):
             )
         if self.request.profile.role != "ADMIN" and not self.request.user.is_superuser:
             if not (
-                (self.request.profile == opportunity_object.created_by)
+                (self.request.profile.user == opportunity_object.created_by)
                 or (self.request.profile in opportunity_object.assigned_to.all())
             ):
                 return Response(

@@ -286,26 +286,30 @@ class AccountDetailView(APIView):
                 {"error": True, "errors": "User company doesnot match with header...."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+        # bug 29: check permission BEFORE validation (matching accounts PATCH and
+        # every other write handler) so an unauthorized caller gets a clean 403,
+        # not a 400 that leaks the serializer's field constraints.
+        if (
+            self.request.profile.role != "ADMIN"
+            and not self.request.profile.is_admin
+        ):
+            if not (
+                (self.request.profile.user == account_object.created_by)
+                or (self.request.profile in account_object.assigned_to.all())
+            ):
+                return Response(
+                    {
+                        "error": True,
+                        "errors": "You do not have Permission to perform this action",
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
         serializer = AccountCreateSerializer(
             account_object, data=data, request_obj=request, account=True
         )
 
         if serializer.is_valid():
-            if (
-                self.request.profile.role != "ADMIN"
-                and not self.request.profile.is_admin
-            ):
-                if not (
-                    (self.request.profile == account_object.created_by)
-                    or (self.request.profile in account_object.assigned_to.all())
-                ):
-                    return Response(
-                        {
-                            "error": True,
-                            "errors": "You do not have Permission to perform this action",
-                        },
-                        status=status.HTTP_403_FORBIDDEN,
-                    )
             save_kwargs = {}
             if "custom_fields" in data:
                 cf_payload = data.get("custom_fields")
@@ -462,7 +466,7 @@ class AccountDetailView(APIView):
         context["account_obj"] = AccountSerializer(self.account).data
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == self.account.created_by)
+                (self.request.profile.user == self.account.created_by)
                 or (self.request.profile in self.account.assigned_to.all())
             ):
                 return Response(
@@ -475,7 +479,7 @@ class AccountDetailView(APIView):
 
         comment_permission = False
         if (
-            self.request.profile == self.account.created_by
+            self.request.profile.user == self.account.created_by
             or self.request.profile.is_admin
             or self.request.profile.role == "ADMIN"
         ):
@@ -583,7 +587,7 @@ class AccountDetailView(APIView):
             )
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == self.account_obj.created_by)
+                (self.request.profile.user == self.account_obj.created_by)
                 or (self.request.profile in self.account_obj.assigned_to.all())
             ):
                 return Response(
@@ -593,13 +597,17 @@ class AccountDetailView(APIView):
                     },
                     status=status.HTTP_403_FORBIDDEN,
                 )
-        comment_serializer = CommentSerializer(data=data)
-        if comment_serializer.is_valid():
-            if data.get("comment"):
-                comment_serializer.save(
-                    account_id=self.account_obj.id,
-                    commented_by=self.request.profile,
-                )
+        # bug 8: derive the generic-FK fields server-side (see contacts). The old
+        # code passed a non-existent account_id and left object_id/org to the
+        # body, so a plain {"comment": "..."} was silently dropped with a 200.
+        if data.get("comment"):
+            Comment.objects.create(
+                comment=data.get("comment"),
+                content_type=ContentType.objects.get_for_model(Account),
+                object_id=self.account_obj.id,
+                commented_by=self.request.profile,
+                org=request.profile.org,
+            )
 
         if self.request.FILES.get("account_attachment"):
             attachment = Attachments()
@@ -650,7 +658,7 @@ class AccountDetailView(APIView):
             )
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == account_object.created_by)
+                (self.request.profile.user == account_object.created_by)
                 or (self.request.profile in account_object.assigned_to.all())
             ):
                 return Response(
@@ -871,11 +879,11 @@ class AccountAttachmentView(APIView):
 
     @extend_schema(tags=["Accounts"], parameters=swagger_params.organization_params)
     def delete(self, request, pk, format=None):
-        self.object = self.model.objects.get(pk=pk)
+        self.object = get_object_or_404(self.model, pk=pk, org=request.profile.org)
         if (
             request.profile.role == "ADMIN"
             or request.profile.is_admin
-            or request.profile == self.object.created_by
+            or request.profile.user == self.object.created_by
         ):
             self.object.delete()
             return Response(
@@ -911,7 +919,10 @@ class AccountCreateMailView(APIView):
             request_obj=request,  # account=account,
         )
 
-        data = {}
+        # bug 7: use a distinct name for the error accumulator instead of
+        # reassigning `data = {}`, which discarded request.data (and its
+        # `recipients`) before the recipient block below could read it.
+        errors = {}
         if serializer.is_valid():
             email_obj = serializer.save(from_account=account)
             if scheduled_later not in ["", None, False, "false"]:
@@ -931,8 +942,8 @@ class AccountCreateMailView(APIView):
                         email_obj.recipients.add(contact)
                     else:
                         email_obj.delete()
-                        data["recipients"] = "Please enter valid recipient"
-                        return Response({"error": True, "errors": data})
+                        errors["recipients"] = "Please enter valid recipient"
+                        return Response({"error": True, "errors": errors})
             if data.get("scheduled_later") != "true":
                 send_email.delay(email_obj.id, str(request.profile.org.id))
             else:

@@ -46,8 +46,8 @@ class TestDomainListView:
 
     def test_unauthenticated(self, unauthenticated_client):
         """Unauthenticated user gets PermissionDenied."""
-        with pytest.raises(PermissionDenied):
-            unauthenticated_client.get(self.url)
+        response = unauthenticated_client.get(self.url)
+        assert response.status_code in (401, 403)
 
 
 @pytest.mark.django_db

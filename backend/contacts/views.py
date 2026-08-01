@@ -64,14 +64,14 @@ class ContactsListView(APIView, LimitOffsetPagination):
                     Q(first_name__icontains=name) | Q(last_name__icontains=name)
                 )
             if params.get("city"):
-                queryset = queryset.filter(address__city__icontains=params.get("city"))
+                queryset = queryset.filter(city__icontains=params.get("city"))
             if params.get("phone"):
                 queryset = queryset.filter(phone__icontains=params.get("phone"))
             if params.get("email"):
                 queryset = queryset.filter(email__icontains=params.get("email"))
             if params.getlist("assigned_to"):
                 queryset = queryset.filter(
-                    assigned_to__id__in=params.get("assigned_to")
+                    assigned_to__id__in=params.getlist("assigned_to")
                 ).distinct()
             if params.get("tags"):
                 queryset = queryset.filter(
@@ -291,7 +291,7 @@ class ContactDetailView(APIView):
 
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == contact_obj.created_by)
+                (self.request.profile.user == contact_obj.created_by)
                 or (self.request.profile in contact_obj.assigned_to.all())
             ):
                 return Response(
@@ -436,7 +436,7 @@ class ContactDetailView(APIView):
         )
         if user_assigned_accounts.intersection(contact_accounts):
             user_assgn_list.append(self.request.profile.id)
-        if self.request.profile == contact_obj.created_by:
+        if self.request.profile.user == contact_obj.created_by:
             user_assgn_list.append(self.request.profile.id)
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if self.request.profile.id not in user_assgn_list:
@@ -465,7 +465,7 @@ class ContactDetailView(APIView):
         else:
             users_mention = list(contact_obj.assigned_to.all().values("user__email"))
 
-        if request.profile == contact_obj.created_by:
+        if request.profile.user == contact_obj.created_by:
             user_assgn_list.append(self.request.profile.id)
 
         # Address is now flat fields on Contact model
@@ -569,10 +569,14 @@ class ContactDetailView(APIView):
     def post(self, request, pk, **kwargs):
         params = request.data
         context = {}
-        self.contact_obj = Contact.objects.get(pk=pk)
+        # bug 30: org-scope the lookup so an admin can't comment/attach on
+        # another org's contact, and an unknown pk is a 404 (not a 500).
+        self.contact_obj = get_object_or_404(
+            Contact, pk=pk, org=request.profile.org
+        )
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == self.contact_obj.created_by)
+                (self.request.profile.user == self.contact_obj.created_by)
                 or (self.request.profile in self.contact_obj.assigned_to.all())
             ):
                 return Response(
@@ -582,14 +586,18 @@ class ContactDetailView(APIView):
                     },
                     status=status.HTTP_403_FORBIDDEN,
                 )
-        comment_serializer = CommentSerializer(data=params)
-        if comment_serializer.is_valid():
-            if params.get("comment"):
-                comment_serializer.save(
-                    contact_id=self.contact_obj.id,
-                    commented_by_id=self.request.profile.id,
-                    org=request.profile.org,
-                )
+        # bug 8: derive the generic-FK fields server-side. The old code passed a
+        # non-existent contact_id and left object_id/org to be supplied by the
+        # body, so a normal {"comment": "..."} failed validation and the comment
+        # was silently dropped while the handler still returned 200.
+        if params.get("comment"):
+            Comment.objects.create(
+                comment=params.get("comment"),
+                content_type=ContentType.objects.get_for_model(Contact),
+                object_id=self.contact_obj.id,
+                commented_by=request.profile,
+                org=request.profile.org,
+            )
 
         if self.request.FILES.get("contact_attachment"):
             attachment = Attachments()
@@ -649,7 +657,7 @@ class ContactDetailView(APIView):
             )
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == contact_obj.created_by)
+                (self.request.profile.user == contact_obj.created_by)
                 or (self.request.profile in contact_obj.assigned_to.all())
             ):
                 return Response(
@@ -888,11 +896,11 @@ class ContactAttachmentView(APIView):
         },
     )
     def delete(self, request, pk, format=None):
-        self.object = self.model.objects.get(pk=pk)
+        self.object = get_object_or_404(self.model, pk=pk, org=request.profile.org)
         if (
             request.profile.role == "ADMIN"
             or request.profile.is_admin
-            or request.profile == self.object.created_by
+            or request.profile.user == self.object.created_by
         ):
             self.object.delete()
             return Response(

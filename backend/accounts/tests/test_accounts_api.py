@@ -46,10 +46,10 @@ class TestAccountListView:
         assert data["error"] is True
 
     def test_create_account_unauthenticated(self, unauthenticated_client):
-        with pytest.raises(PermissionDenied):
-            unauthenticated_client.post(
-                "/api/accounts/", {"name": "Test"}
-            )
+        response = unauthenticated_client.post(
+            "/api/accounts/", {"name": "Test"}
+        )
+        assert response.status_code in (401, 403)
 
     def test_create_account_with_all_fields(self, admin_client, org_a, admin_profile):
         """Test creating an account with all optional fields populated."""

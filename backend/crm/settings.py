@@ -183,7 +183,11 @@ LOGGING = {
     "formatters": {
         "django.server": {
             "()": "django.utils.log.ServerFormatter",
-            "format": "[%(server_time)s] %(message)s",
+            # bug 21: brace style matches Django's default and re-enables
+            # ServerFormatter's server_time fallback, so the broken-pipe log path
+            # (which logs without server_time) no longer crashes with a KeyError.
+            "format": "[{server_time}] {message}",
+            "style": "{",
         },
         "security": {
             "format": "%(asctime)s | %(levelname)s | %(message)s",
@@ -255,6 +259,12 @@ REST_FRAMEWORK = {
         "common.external_auth.APIKeyAuthentication",
         # "rest_framework.authentication.SessionAuthentication",
         # "rest_framework.authentication.BasicAuthentication",
+    ),
+    # Default to authenticated. Intended-anonymous views set permission_classes
+    # explicitly ([] or AllowAny); this is defense-in-depth behind the
+    # RequireOrgContext middleware so a new view can't accidentally be public.
+    "DEFAULT_PERMISSION_CLASSES": (
+        "rest_framework.permissions.IsAuthenticated",
     ),
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
     "PAGE_SIZE": 10,

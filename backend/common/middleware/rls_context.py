@@ -118,9 +118,21 @@ class RequireOrgContext:
         "/admin/",
         "/swagger-ui/",
         "/api/schema/",
-        # Public CSAT survey link (Tier 2 csat) — anonymous, sets RLS
-        # context manually inside the view from the survey's own org_id.
-        "/api/public/csat/",
+        # OpenAPI schema document — fetched by swagger-ui and redoc. A distinct
+        # path from /api/schema/, so it needs its own entry (bug 23).
+        "/schema/",
+        # Health probe must never depend on tenancy state (bug 23).
+        "/healthz/",
+        # Logout must be reachable without an org context (bug 23).
+        "/logout/",
+        # Customer portal (invoice/estimate/csat) — token-scoped and anonymous;
+        # each view enforces its own auth. Widened from /api/public/csat/, which
+        # also sets RLS context manually inside the view from its org_id (bug 23).
+        "/api/public/",
+        # Website lead-capture form — authenticated by its api_setting apikey (bug 23).
+        "/api/leads/create-from-site/",
+        # AWS SNS inbound-email webhook — authenticated by SNS signature (bug 23).
+        "/api/cases/inbound/",
     ]
 
     def __init__(self, get_response):

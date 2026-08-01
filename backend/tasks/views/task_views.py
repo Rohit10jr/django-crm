@@ -20,6 +20,7 @@ from common.serializer import (
     ProfileSerializer,
     TeamsSerializer,
 )
+from accounts.models import Account
 from contacts.models import Contact
 from cases.models import Case
 from leads.models import Lead
@@ -117,6 +118,20 @@ class TaskListView(APIView, LimitOffsetPagination):
                 "tasks_count": self.count,
                 "offset": offset,
                 "tasks": tasks,
+                # bug: the list response must expose the form-helper lists the
+                # frontend needs (status/priority choices + org accounts/contacts).
+                "status": list(Task.STATUS_CHOICES),
+                "priority": list(Task.PRIORITY_CHOICES),
+                "accounts_list": list(
+                    Account.objects.filter(
+                        org=self.request.profile.org
+                    ).values("id", "name")
+                ),
+                "contacts_list": list(
+                    Contact.objects.filter(
+                        org=self.request.profile.org
+                    ).values("id", "first_name", "last_name")
+                ),
             }
         )
         return context
@@ -157,6 +172,15 @@ class TaskListView(APIView, LimitOffsetPagination):
     )
     def post(self, request, *args, **kwargs):
         params = request.data
+        # bug: reject a duplicate task title within the same org (the list/create
+        # tests assert this; there is no DB-level unique constraint on title).
+        if params.get("title") and Task.objects.filter(
+            org=request.profile.org, title=params.get("title")
+        ).exists():
+            return Response(
+                {"error": True, "errors": "A task with this title already exists."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         serializer = TaskCreateSerializer(data=params, request_obj=request)
         if serializer.is_valid():
             cf_payload = params.get("custom_fields")
@@ -280,7 +304,7 @@ class TaskDetailView(APIView):
         user_assgn_list = [
             assigned_to.id for assigned_to in self.task_obj.assigned_to.all()
         ]
-        if self.request.profile == self.task_obj.created_by:
+        if self.request.profile.user == self.task_obj.created_by:
             user_assgn_list.append(self.request.profile.id)
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if self.request.profile.id not in user_assgn_list:
@@ -378,6 +402,11 @@ class TaskDetailView(APIView):
     def get(self, request, pk, **kwargs):
         self.task_obj = self.get_object(pk)
         context = self.get_context_data(**kwargs)
+        # bug 13: get_context_data returns a Response (403) on the permission-
+        # denied path; return it directly instead of re-wrapping it in another
+        # Response (which loses the 403 status).
+        if isinstance(context, Response):
+            return context
         return Response(context)
 
     @extend_schema(
@@ -402,7 +431,7 @@ class TaskDetailView(APIView):
         self.task_obj = get_object_or_404(Task, pk=pk, org=request.profile.org)
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == self.task_obj.created_by)
+                (self.request.profile.user == self.task_obj.created_by)
                 or (self.request.profile in self.task_obj.assigned_to.all())
             ):
                 return Response(
@@ -479,7 +508,7 @@ class TaskDetailView(APIView):
         # though they can't read it.
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == self.task_obj.created_by)
+                (self.request.profile.user == self.task_obj.created_by)
                 or (self.request.profile in self.task_obj.assigned_to.all())
             ):
                 return Response(
@@ -631,7 +660,7 @@ class TaskDetailView(APIView):
         self.task_obj = self.get_object(pk)
         if self.request.profile.role != "ADMIN" and not self.request.profile.is_admin:
             if not (
-                (self.request.profile == self.task_obj.created_by)
+                (self.request.profile.user == self.task_obj.created_by)
                 or (self.request.profile in self.task_obj.assigned_to.all())
             ):
                 return Response(
@@ -794,7 +823,7 @@ class TaskDetailView(APIView):
         if (
             request.profile.role == "ADMIN"
             or request.profile.is_admin
-            or request.profile == self.object.created_by
+            or request.profile.user == self.object.created_by
         ):
             self.object.delete()
             return Response(
@@ -952,11 +981,11 @@ class TaskAttachmentView(APIView):
         },
     )
     def delete(self, request, pk, format=None):
-        self.object = self.model.objects.get(pk=pk)
+        self.object = get_object_or_404(self.model, pk=pk, org=request.profile.org)
         if (
             request.profile.role == "ADMIN"
             or request.profile.is_admin
-            or request.profile == self.object.created_by
+            or request.profile.user == self.object.created_by
         ):
             self.object.delete()
             return Response(
