@@ -314,7 +314,9 @@ SWAGGER_SETTINGS = {
     },
 }
 
-CORS_ALLOW_HEADERS = default_headers + ("org",)
+# bug 24: the "org" request header is vestigial — org comes from the JWT org_id
+# claim, nothing reads the header, and it's no longer advertised in the schema.
+CORS_ALLOW_HEADERS = default_headers
 # Security: CORS configuration via environment variables
 CORS_ORIGIN_ALLOW_ALL = os.environ.get("CORS_ALLOW_ALL", "False").lower() == "true"
 CORS_ALLOWED_ORIGINS = [

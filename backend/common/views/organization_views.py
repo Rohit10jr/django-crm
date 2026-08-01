@@ -315,15 +315,8 @@ class ProfileDetailView(APIView):
 
     @extend_schema(
         description="Get profile for current user in specified organization",
-        parameters=[
-            OpenApiParameter(
-                "org",
-                OpenApiTypes.UUID,
-                OpenApiParameter.HEADER,
-                required=True,
-                description="Organization ID",
-            )
-        ],
+        # bug 24: org comes from the JWT claim, not an "org" header.
+        parameters=[],
         responses={200: serializer.ProfileDetailSerializer},
     )
     def get(self, request):

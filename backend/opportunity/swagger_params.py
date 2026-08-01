@@ -6,12 +6,10 @@ organization_params_in_header = organization_params_in_header = OpenApiParameter
 )
 
 organization_params = [
-    organization_params_in_header,
 ]
 
 
 opportunity_list_get_params = [
-    organization_params_in_header,
     OpenApiParameter("name", OpenApiTypes.STR, OpenApiParameter.QUERY),
     OpenApiParameter("account", OpenApiTypes.STR, OpenApiParameter.QUERY),
     OpenApiParameter("stage", OpenApiTypes.STR, OpenApiParameter.QUERY),
@@ -20,7 +18,6 @@ opportunity_list_get_params = [
 ]
 
 opportunity_detail_get_params = [
-    organization_params_in_header,
     OpenApiParameter(
         "opportunity_attachment",
         OpenApiParameter.QUERY,
@@ -30,6 +27,5 @@ opportunity_detail_get_params = [
 ]
 
 opportunity_comment_edit_params = [
-    organization_params_in_header,
     OpenApiParameter("comment", OpenApiTypes.STR, OpenApiParameter.QUERY),
 ]
