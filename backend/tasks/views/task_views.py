@@ -172,15 +172,6 @@ class TaskListView(APIView, LimitOffsetPagination):
     )
     def post(self, request, *args, **kwargs):
         params = request.data
-        # bug: reject a duplicate task title within the same org (the list/create
-        # tests assert this; there is no DB-level unique constraint on title).
-        if params.get("title") and Task.objects.filter(
-            org=request.profile.org, title=params.get("title")
-        ).exists():
-            return Response(
-                {"error": True, "errors": "A task with this title already exists."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
         serializer = TaskCreateSerializer(data=params, request_obj=request)
         if serializer.is_valid():
             cf_payload = params.get("custom_fields")
