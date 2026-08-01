@@ -69,3 +69,24 @@ if params.get("title") and Task.objects.filter(
     )
 ```
 </details>
+
+---
+
+## 2. Breaking, frontend-coupled contract changes (deferred)
+
+These are real but require a **coordinated backend + frontend migration**, so they
+were not applied during the adoption. Grouped here for planning.
+
+- **bug 11 — PUT behaves as PATCH (~15 endpoints).** Detail `put()` handlers pass
+  `partial=True`, so PUT preserves omitted fields. Fix = honor PUT as full-replace
+  and add explicit PATCH, *or* rename to PATCH. Either changes behavior the
+  frontend depends on. Pick one convention and migrate both sides together.
+- **bug 25 — pagination is hand-rolled per endpoint** with inconsistent keys
+  (`page_number`, `per_page`, `<name>_count`). Standardize one envelope; ~20
+  frontend loaders read the custom keys.
+- **bug 26 — error responses are hand-rolled and inconsistent**
+  (`{"error": true, "errors": …}` vs `{"detail": …}`). Standardize via a custom
+  DRF `EXCEPTION_HANDLER`; frontend parses per-field errors.
+
+Each should be versioned or shipped as a coordinated backend+frontend change with
+contract tests, not a drop-in swap.

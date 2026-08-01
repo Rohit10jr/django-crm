@@ -94,6 +94,35 @@ Three tests pinned the old bugs (double-wrapped `TypeError`, cross-org POST → 
 rewritten to assert the fixed behavior (403 / 404). (`leads/tests/test_leads_api.py`,
 `tasks/tests/test_tasks_api.py`.)
 
+## Group C — API contract
+
+### bug 12 — `page_number` serializes as `[1]`
+A stray trailing comma made `page_number` a 1-tuple, so list responses returned
+`page_number: [1]` where the schema declares an IntegerField. Dropped the comma
+across the accounts/contacts/leads/opportunity/teams list views. (Residual: the
+`per_page` field is still hard-coded to 10 — value-accuracy only, not a schema
+mismatch; left for the pagination-standardization work, bug 25.)
+
+### bug 17 — phantom serializer fields
+`AccountSerializer.account_attachment` / `ContactSerializer.contact_attachment`
+declared read-only relations that don't exist on the models, so DRF `SkipField`ed
+them (never in any response) while the schema advertised them. Removed both.
+
+### bugs 20 / 24 — vestigial `org` request header
+Nothing reads the `org` header (org comes from the JWT `org_id` claim; a test
+proves it's ignored), yet it was advertised on ~300 operations and whitelisted in
+CORS. Removed it from every `swagger_params` list, the invoices
+`company_params_in_header` base, the `ProfileDetailView` inline param, and
+`CORS_ALLOW_HEADERS`. Verified the generated schema has **0** `org` header params.
+
+### bug 11 — PUT behaves as PATCH (~15 endpoints) — DEFERRED
+Many detail `put()` handlers pass `partial=True`, so PUT preserves omitted fields
+instead of clearing them. The fix (honor PUT as full-replace + add PATCH, or
+rename to PATCH) is a **breaking, frontend-coupled** change — the SvelteKit
+frontend relies on the current partial behavior. Deferred to a coordinated
+backend+frontend migration alongside bugs 25 (pagination) and 26 (error envelope).
+Recorded in `claude_upstream_issues.md`.
+
 ## Group E — dev-experience
 
 ### bug 21 — `django.server` formatter crashes on client disconnect
