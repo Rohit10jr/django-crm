@@ -130,3 +130,37 @@ The formatter used percent style `[%(server_time)s]`, so `ServerFormatter`'s
 `server_time` fallback never fired; the broken-pipe log path (no `server_time`)
 then crashed with a KeyError on every disconnect (~40-line traceback). Use brace
 style + `style="{"`. Dev-server only. (`crm/settings.py`.)
+
+## Group D — behavior correctness
+
+### bug 16 — macros scope default + list hides soft-deleted
+Omitting `scope` on create defaulted to `org`, which 403'd non-admins (the
+docstring promises non-admins are forced to personal). Default non-admins to
+personal, admins to org. Also the list only filtered `is_active` when `?active`
+was passed, so soft-deleted org macros stayed visible; hide inactive by default
+(`?active=false` reveals them). (`macros/views.py`.)
+
+### bug 18 — invoice payment response stale + attachment delete scope
+(a) `POST …/payments/` returned the invoice without `refresh_from_db`, so
+`amount_paid`/`status` showed pre-payment values (mark-paid refreshed → the two
+disagreed). (b) `DELETE …/attachments/<pk>/` filtered on id+org only, so any org
+attachment could be deleted through the invoice route; restrict to invoice
+attachments via `content_type`. (`invoices/api_views.py`.)
+
+### bug 33 — task-move WIP-limit TOCTOU
+The move counted `stage.tasks` then saved with no lock between, so two concurrent
+moves into a near-full stage could both pass and exceed the WIP limit.
+`select_for_update()` on the target stage inside the existing `@transaction.atomic`
+serializes them (no-op on SQLite). (`tasks/views/kanban_views.py`.)
+
+---
+
+## Phase 4 result
+
+Groups 0, A, B, C, D, E complete. Deferred as coordinated breaking changes:
+bug 11 (PUT/PATCH), 25 (pagination), 26 (error envelope) — see
+`claude_upstream_issues.md`. Task duplicate-title (Group 0) reverted + `xfail`ed,
+also recorded as an upstream question.
+
+Full suite: **all green** — see the final run below. Started from the Phase 2
+baseline of 50 failed / 1986 passed.
