@@ -278,7 +278,15 @@ class TaskMoveView(APIView):
         # Handle stage change
         if "stage_id" in data:
             if data["stage_id"]:
-                stage = get_object_or_404(TaskStage, pk=data["stage_id"], org=org)
+                # bug 33: lock the target stage row for the duration of this
+                # atomic block so two concurrent moves into the same near-full
+                # stage serialize on the WIP-limit check instead of both reading
+                # count = limit-1 and both saving (TOCTOU). No-op on SQLite.
+                stage = get_object_or_404(
+                    TaskStage.objects.select_for_update(),
+                    pk=data["stage_id"],
+                    org=org,
+                )
 
                 # Check WIP limit
                 if stage.wip_limit:
