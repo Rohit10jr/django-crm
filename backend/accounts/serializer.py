@@ -27,7 +27,6 @@ class AccountSerializer(serializers.ModelSerializer):
     assigned_to = ProfileSerializer(read_only=True, many=True)
     contacts = ContactSerializer(read_only=True, many=True)
     teams = TeamsSerializer(read_only=True, many=True)
-    account_attachment = AttachmentsSerializer(read_only=True, many=True)
     country_display = serializers.SerializerMethodField()
     cases = serializers.SerializerMethodField()
     tasks = serializers.SerializerMethodField()
@@ -90,7 +89,6 @@ class AccountSerializer(serializers.ModelSerializer):
             # Notes
             "description",
             # Related
-            "account_attachment",
             "cases",
             "tasks",
             "opportunities",
